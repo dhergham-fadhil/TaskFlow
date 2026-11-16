@@ -6,32 +6,40 @@ namespace TaskFlow.Services;
 
 public static class DatabaseSeeder
 {
-    /// <summary>
-    /// Seeds the demo administrator account and sample workspace.
-    /// Only runs when the database is empty AND demo seeding is enabled
-    /// in configuration (enabled by default in Development only).
-    /// </summary>
-    public static async Task SeedAsync(ApplicationDbContext context, IConfiguration configuration)
+/// <summary>
+/// Seeds the demo administrator account and sample workspace.
+/// Only runs when the database is empty, demo seeding is enabled,
+/// and the environment is Development. Never introduces insecure
+/// default credentials — Demo:Email and Demo:Password must be
+/// explicitly configured via environment variables or user secrets.
+/// </summary>
+public static async Task SeedAsync(ApplicationDbContext context, IConfiguration configuration, bool isDevelopment)
+{
+    if (await context.Users.AnyAsync())
+        return;
+
+    if (!isDevelopment)
+        return;
+
+    var demoEnabled = configuration.GetValue("Demo:Enabled", false);
+    if (!demoEnabled)
+        return;
+
+    var demoEmail = configuration["Demo:Email"];
+    var demoPassword = configuration["Demo:Password"];
+    if (string.IsNullOrWhiteSpace(demoEmail) || string.IsNullOrWhiteSpace(demoPassword))
+        return;
+
+    var demoName = configuration["Demo:Name"] ?? "Demo User";
+
+    var user = new User
     {
-        if (await context.Users.AnyAsync())
-            return;
-
-        var demoEnabled = configuration.GetValue("Demo:Enabled", false);
-        if (!demoEnabled)
-            return;
-
-        var demoEmail = configuration.GetValue("Demo:Email", "dhergham@example.com");
-        var demoPassword = configuration.GetValue("Demo:Password", "password123");
-        var demoName = configuration.GetValue("Demo:Name", "Dhergham Fadhil Awad");
-
-        var user = new User
-        {
-            Email = demoEmail,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(demoPassword),
-            Name = demoName,
-            Role = "admin",
-            CreatedAt = DateTime.UtcNow
-        };
+        Email = demoEmail,
+        PasswordHash = BCrypt.Net.BCrypt.HashPassword(demoPassword),
+        Name = demoName,
+        Role = "admin",
+        CreatedAt = DateTime.UtcNow
+    };
         context.Users.Add(user);
         await context.SaveChangesAsync();
 

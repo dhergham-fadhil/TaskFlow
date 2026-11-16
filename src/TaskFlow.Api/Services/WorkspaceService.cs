@@ -2,16 +2,22 @@ using TaskFlow.Data;
 using TaskFlow.Dtos;
 using TaskFlow.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Hosting;
 
 namespace TaskFlow.Services;
 
 public class WorkspaceService : IWorkspaceService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IConfiguration _configuration;
+    private readonly IWebHostEnvironment _env;
 
-    public WorkspaceService(ApplicationDbContext context)
+    public WorkspaceService(ApplicationDbContext context, IConfiguration configuration, IWebHostEnvironment env)
     {
         _context = context;
+        _configuration = configuration;
+        _env = env;
     }
 
     public async Task<WorkspaceResponseDto> GetWorkspaceAsync(int userId)
@@ -69,7 +75,8 @@ public class WorkspaceService : IWorkspaceService
             Tasks = tasks.Select(t => t.ToDto()).ToList(),
             Members = members.Select(m => m.ToDto(m.Id == userId)).ToList(),
             Activities = activities.Select(a => a.ToDto()).ToList(),
-            CurrentUserId = userId
+            CurrentUserId = userId,
+            DemoEnabled = _configuration.GetValue("Demo:Enabled", false) && _env.IsDevelopment()
         };
     }
 }

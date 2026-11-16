@@ -85,6 +85,7 @@ export function mapWorkspace(data: any): Workspace {
     members: (data?.members || []).map(mapUser),
     activities: (data?.activities || []).map(mapActivity),
     currentUserId: data?.currentUserId ? data.currentUserId.toString() : '',
+    demoEnabled: data?.demoEnabled ?? false,
   }
 }
 

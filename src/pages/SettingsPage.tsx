@@ -207,9 +207,10 @@ function ProfileCard() {
 }
 
 function WorkspaceControlsCard() {
-  const { refresh, resetWorkspace, currentUser } = useWorkspace()
+  const { refresh, resetWorkspace, currentUser, demoEnabled } = useWorkspace()
   const { toast } = useToast()
   const isAdmin = currentUser?.role === 'admin'
+  const canReset = isAdmin && demoEnabled
   const [syncing, setSyncing] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -269,7 +270,7 @@ function WorkspaceControlsCard() {
             Sync latest data
           </Button>
 
-          {isAdmin && (
+          {canReset && (
             <Button
               size="sm"
               variant="danger"
@@ -281,8 +282,10 @@ function WorkspaceControlsCard() {
           )}
         </div>
         <p className="text-[11px] text-muted/70">
-          {isAdmin
+          {canReset
             ? 'Reset demo data is restricted to administrators and only works while demo mode is enabled on the server.'
+            : isAdmin
+            ? 'Demo mode is disabled on this server. Workspace reset is unavailable.'
             : 'Administrative actions (like workspace reset) require an administrator account.'}
         </p>
       </div>

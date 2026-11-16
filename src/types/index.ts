@@ -83,6 +83,8 @@ export interface Workspace {
   members: User[]
   activities: Activity[]
   currentUserId: string
+  /** Whether demo-mode reset is enabled on the server (Development only). */
+  demoEnabled: boolean
 }
 
 /** Payload accepted by POST /api/tasks */

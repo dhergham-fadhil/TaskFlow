@@ -42,6 +42,7 @@ interface WorkspaceContextValue {
   updateProfile: (patch: { name?: string; email?: string; role?: string }) => Promise<User>
   refreshActivities: () => Promise<void>
   resetWorkspace: () => Promise<void>
+  demoEnabled: boolean
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
@@ -214,6 +215,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       activities: workspace?.activities ?? [],
       currentUser: workspace?.members.find((m) => m.id === workspace.currentUserId) ?? null,
       currentUserId: workspace?.currentUserId ?? '',
+      demoEnabled: workspace?.demoEnabled ?? false,
       loading,
       error,
       refresh,

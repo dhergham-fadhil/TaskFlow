@@ -334,7 +334,7 @@ api.MapPut("/users/me", async (JsonElement patch, ClaimsPrincipal user, IUserSer
     db.Users.RemoveRange(db.Users);
     await db.SaveChangesAsync();
 
-    await DatabaseSeeder.SeedAsync(db, config);
+    await DatabaseSeeder.SeedAsync(db, config, env.IsDevelopment());
     return Results.NoContent();
 });
 
@@ -349,7 +349,7 @@ using (var scope = app.Services.CreateScope())
     if (autoMigrate)
         await dbContext.Database.MigrateAsync();
 
-    await DatabaseSeeder.SeedAsync(dbContext, builder.Configuration);
+    await DatabaseSeeder.SeedAsync(dbContext, builder.Configuration, builder.Environment.IsDevelopment());
 }
 
 app.Run();
