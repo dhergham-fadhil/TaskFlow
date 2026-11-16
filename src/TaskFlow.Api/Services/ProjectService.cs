@@ -1,0 +1,295 @@
+using TaskFlow.Models;
+using TaskFlow.Dtos;
+using TaskFlow.Data;
+using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+
+namespace TaskFlow.Services;
+
+public class ProjectService : IProjectService
+{
+    private readonly ApplicationDbContext _context;
+
+    public ProjectService(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<PagedResult<ProjectResponseDto>> ListAsync(int userId, int page, int pageSize)
+    {
+        var query = _context.Projects
+            .Include(p => p.Tasks)
+                .ThenInclude(t => t.Subtasks)
+            .Include(p => p.Tasks)
+                .ThenInclude(t => t.Comments)
+            .AsNoTracking()
+            .Where(p => p.OwnerId == userId || p.MemberIds.Contains(userId));
+
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderBy(p => p.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(p => p.ToDto())
+            .ToListAsync();
+
+        return new PagedResult<ProjectResponseDto>(items, page, pageSize, total);
+    }
+
+    public async Task<ProjectResponseDto?> GetAsync(int id, int userId)
+    {
+        var project = await _context.Projects
+            .Include(p => p.Tasks)
+                .ThenInclude(t => t.Subtasks)
+            .Include(p => p.Tasks)
+                .ThenInclude(t => t.Comments)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == id);
+
+        if (project is null) return null;
+
+        var actor = await _context.Users.FindAsync(userId);
+        return AccessControl.CanAccessProject(actor, project) ? project.ToDto() : null;
+    }
+
+    public async Task<ProjectResponseDto> CreateAsync(CreateProjectDto dto, int ownerId)
+    {
+        if (!AppConstants.IsValidProjectStatus(dto.Status))
+            throw new ValidationException($"Invalid status '{dto.Status}'. Allowed: {string.Join(", ", AppConstants.ProjectStatuses)}");
+        if (!AppConstants.ProjectIcons.Contains(dto.Icon, StringComparer.Ordinal))
+            throw new ValidationException($"Invalid icon '{dto.Icon}'. Allowed: {string.Join(", ", AppConstants.ProjectIcons)}");
+
+        if (dto.MemberIds.Any(id => id != ownerId))
+        {
+            var knownIds = await _context.Users
+                .AsNoTracking()
+                .Where(u => dto.MemberIds.Contains(u.Id))
+                .Select(u => u.Id)
+                .ToListAsync();
+            var unknown = dto.MemberIds.Where(id => id != ownerId).Except(knownIds).ToList();
+            if (unknown.Count > 0)
+                throw new ValidationException($"Unknown member ids: {string.Join(", ", unknown)}.");
+        }
+
+        var members = new List<int> { ownerId };
+        members.AddRange(dto.MemberIds.Where(id => id != ownerId));
+
+        var project = new Project
+        {
+            Name = dto.Name,
+            Description = dto.Description,
+            Color = dto.Color,
+            Icon = dto.Icon,
+            Status = dto.Status,
+            DueDate = dto.DueDate,
+            MemberIds = members.Distinct().ToList(),
+            OwnerId = ownerId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Projects.Add(project);
+        await _context.SaveChangesAsync();
+
+        await RecordAsync(new Activity
+        {
+            ActorId = ownerId,
+            Action = "created",
+            Target = project.Name,
+            Kind = "project",
+            ProjectId = project.Id
+        });
+
+        return project.ToDto();
+    }
+
+    public async Task<ProjectResponseDto?> UpdateAsync(int id, System.Text.Json.JsonElement patch, int userId)
+    {
+        var project = await _context.Projects
+            .Include(p => p.Tasks)
+                .ThenInclude(t => t.Subtasks)
+            .Include(p => p.Tasks)
+                .ThenInclude(t => t.Comments)
+            .FirstOrDefaultAsync(p => p.Id == id);
+
+        if (project is null) return null;
+
+        var actor = await _context.Users.FindAsync(userId);
+        if (!AccessControl.CanManageProject(actor, project)) return null;
+
+        if (patch.TryGetProperty("name", out var name) && name.ValueKind is System.Text.Json.JsonValueKind.String)
+        {
+            var newName = name.GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(newName))
+                throw new ValidationException("Name cannot be empty.");
+            project.Name = newName;
+        }
+
+        if (patch.TryGetProperty("description", out var description) && description.ValueKind is System.Text.Json.JsonValueKind.String)
+            project.Description = description.GetString() ?? project.Description;
+
+        if (patch.TryGetProperty("color", out var color) && color.ValueKind is System.Text.Json.JsonValueKind.String)
+            project.Color = color.GetString() ?? project.Color;
+
+        if (patch.TryGetProperty("icon", out var icon) && icon.ValueKind is System.Text.Json.JsonValueKind.String)
+        {
+            var value = icon.GetString() ?? project.Icon;
+            if (!AppConstants.ProjectIcons.Contains(value, StringComparer.Ordinal))
+                throw new ValidationException($"Invalid icon '{value}'.");
+            project.Icon = value;
+        }
+
+        if (patch.TryGetProperty("status", out var status) && status.ValueKind is System.Text.Json.JsonValueKind.String)
+        {
+            if (!AppConstants.IsValidProjectStatus(status.GetString()))
+                throw new ValidationException($"Invalid status '{status.GetString()}'.");
+            project.Status = status.GetString()!;
+        }
+
+        if (patch.TryGetProperty("dueDate", out var dueDate))
+            project.DueDate = dueDate.ValueKind is System.Text.Json.JsonValueKind.Null
+                ? null
+                : dueDate.Deserialize<DateTime?>();
+
+        if (patch.TryGetProperty("memberIds", out var memberIds) && memberIds.ValueKind is System.Text.Json.JsonValueKind.Array)
+        {
+            var requestedIds = memberIds.EnumerateArray().Select(x => x.GetInt32()).Distinct().ToList();
+            // Every member must reference a real account.
+            var knownIds = await _context.Users
+                .AsNoTracking()
+                .Where(u => requestedIds.Contains(u.Id))
+                .Select(u => u.Id)
+                .ToListAsync();
+            var unknown = requestedIds.Except(knownIds).ToList();
+            if (unknown.Count > 0)
+                throw new ValidationException($"Unknown member ids: {string.Join(", ", unknown)}.");
+
+            // The owner always keeps membership; removing them would orphan the project.
+            var next = requestedIds.Contains(project.OwnerId)
+                ? requestedIds
+                : requestedIds.Prepend(project.OwnerId).ToList();
+            project.MemberIds = next;
+        }
+
+        await _context.SaveChangesAsync();
+
+        await RecordAsync(new Activity
+        {
+            ActorId = userId,
+            Action = "updated",
+            Target = project.Name,
+            Kind = "project",
+            ProjectId = project.Id
+        });
+
+        return project.ToDto();
+    }
+
+    public async Task<ProjectResponseDto?> SetStatusAsync(int id, string status, int userId)
+    {
+        if (!AppConstants.IsValidProjectStatus(status))
+            throw new ValidationException($"Invalid status '{status}'. Allowed: {string.Join(", ", AppConstants.ProjectStatuses)}");
+
+        var project = await _context.Projects.FindAsync(id);
+        if (project is null) return null;
+
+        var actor = await _context.Users.FindAsync(userId);
+        if (!AccessControl.CanManageProject(actor, project)) return null;
+
+        project.Status = status;
+        await _context.SaveChangesAsync();
+
+        await RecordAsync(new Activity
+        {
+            ActorId = userId,
+            Action = status == "paused" ? "paused" : "updated",
+            Target = project.Name,
+            Kind = "project",
+            ProjectId = project.Id
+        });
+
+        return project.ToDto();
+    }
+
+    public async Task<bool> DeleteAsync(int id, int userId)
+    {
+        var project = await _context.Projects.FindAsync(id);
+        if (project is null) return false;
+
+        var actor = await _context.Users.FindAsync(userId);
+        if (!AccessControl.CanManageProject(actor, project)) return false;
+
+        _context.Projects.Remove(project);
+        await _context.SaveChangesAsync();
+
+        await RecordAsync(new Activity
+        {
+            ActorId = userId,
+            Action = "deleted",
+            Target = project.Name,
+            Kind = "project",
+            ProjectId = project.Id
+        });
+
+        return true;
+    }
+
+    public async Task<bool> AddMemberAsync(int projectId, int memberId, int userId)
+    {
+        var project = await _context.Projects.FindAsync(projectId);
+        if (project is null) return false;
+
+        var actor = await _context.Users.FindAsync(userId);
+        if (!AccessControl.CanManageProject(actor, project)) return false;
+
+        var member = await _context.Users.FindAsync(memberId);
+        if (member is null) return false;
+
+        if (!project.MemberIds.Contains(memberId))
+            project.MemberIds.Add(memberId);
+
+        await _context.SaveChangesAsync();
+
+        await RecordAsync(new Activity
+        {
+            ActorId = userId,
+            Action = "updated members of",
+            Target = project.Name,
+            Kind = "project",
+            ProjectId = project.Id
+        });
+
+        return true;
+    }
+
+    public async Task<bool> RemoveMemberAsync(int projectId, int memberId, int userId)
+    {
+        var project = await _context.Projects.FindAsync(projectId);
+        if (project is null) return false;
+
+        var actor = await _context.Users.FindAsync(userId);
+        if (!AccessControl.CanManageProject(actor, project)) return false;
+
+        // The owner cannot be removed from their own project.
+        if (memberId == project.OwnerId) return false;
+
+        project.MemberIds.RemoveAll(id => id == memberId);
+        await _context.SaveChangesAsync();
+
+        await RecordAsync(new Activity
+        {
+            ActorId = userId,
+            Action = "updated members of",
+            Target = project.Name,
+            Kind = "project",
+            ProjectId = project.Id
+        });
+
+        return true;
+    }
+
+    private Task RecordAsync(Activity activity)
+    {
+        _context.Activities.Add(activity);
+        return _context.SaveChangesAsync();
+    }
+}

@@ -1,0 +1,78 @@
+# === TaskFlow .gitignore ===
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE / Editor
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+vs/
+.code-workspace
+.vscode/settings.json
+
+# Node / frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+build/
+*.tsbuildinfo
+.vite/
+coverage/
+.env
+.env.local
+.env.*.local
+! .env.example
+
+# .NET / backend
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.cache
+*.ilk
+*.log
+*.idb
+*.tlog
+*.lastcodeanalysisstate
+*.opensdf
+*.sdf
+publish/
+*.DotSettings.user
+
+# EF Core migrations snapshots (regenerable)
+# src/TaskFlow.Api/Migrations/*ModelSnapshot.cs  -- keep this, it's part of migrations
+
+# Runtime data
+*.sqlite
+*.db
+*.db-journal
+
+# Logs
+*.log
+vite.err.log
+vite.log
+npm-debug.log*
+
+# Temp / misc
+query
+*.tmp
+*.temp
+~*
+
+# Freebuff (project-specific tooling)
+.freebuff/
+
+# End of .gitignore
