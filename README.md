@@ -73,21 +73,16 @@ Task Flow/
 2. Configure JWT settings. The JWT key must be at least 32 characters. Use environment variables or .NET User Secrets:
    ```bash
    dotnet user-secrets set "Jwt:Key" "your-32-character-minimum-secret-key-here"
-   dotnet user-secrets set "Demo__Email" "demo@example.com"
-   dotnet user-secrets set "Demo__Password" "DemoPass123!"
+   dotnet user-secrets set "Demo:Email" "demo@example.com"
+   dotnet user-secrets set "Demo:Password" "DemoPass123!"
    ```
 
-3. Apply migrations:
-   ```bash
-   dotnet ef database update
-   ```
-
-4. Run the API:
+3. Run the API:
    ```bash
    dotnet run
    ```
 
-   The API listens on `http://localhost:5187` by default.
+   The API applies pending migrations automatically on startup and listens on `http://localhost:5187` by default.
 
 ### Backend Tests
 
@@ -171,7 +166,7 @@ Frontend (`.env`):
 
 ### Backend (xUnit)
 
-38 tests covering:
+37 tests covering:
 - Auth service: registration, login, duplicate email, password validation
 - Task service: creation, ordering, validation, subtasks, comments, move, delete
 - Project service: creation, status changes, members, deletion, access control
