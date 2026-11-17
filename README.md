@@ -70,12 +70,15 @@ Task Flow/
    cd src/TaskFlow.Api
    ```
 
-2. Configure JWT settings. The JWT key must be at least 32 characters. Use environment variables or .NET User Secrets:
+2. Configure JWT settings and demo credentials. The JWT key must be at least 32 characters.
+   Demo credentials are required to create the demo administrator account; they are never
+   hardcoded. Use environment variables or .NET User Secrets:
    ```bash
    dotnet user-secrets set "Jwt:Key" "your-32-character-minimum-secret-key-here"
-   dotnet user-secrets set "Demo:Email" "demo@example.com"
-   dotnet user-secrets set "Demo:Password" "DemoPass123!"
+   dotnet user-secrets set "Demo:Email" "dhergham@example.com"
+   dotnet user-secrets set "Demo:Password" "password123!"
    ```
+   Without `Demo:Email` and `Demo:Password`, no demo user is seeded and login will fail.
 
 3. Run the API:
    ```bash
@@ -121,13 +124,15 @@ dotnet test src/TaskFlow.Api.Tests/
 
 ### Environment Variables
 
-Backend (`appsettings.Development.json` or user secrets):
+Backend (`appsettings.Development.json` or user secrets, use `:` separators):
 - `Jwt:Key` — Signing key for JWT tokens (min 32 chars)
 - `Jwt:Issuer` — JWT issuer
 - `Jwt:Audience` — JWT audience
-- `Demo__Email` — Demo account email
-- `Demo__Password` — Demo account password
-- `Demo__Enabled` — Enable demo mode (default: true)
+- `Demo:Email` — Demo account email (required to seed the demo user)
+- `Demo:Password` — Demo account password (required to seed the demo user)
+- `Demo:Enabled` — Enable demo mode (default: true)
+
+  As environment variables, use `__` instead of `:` (e.g. `Demo__Email`, `Demo__Password`).
 
 Frontend (`.env`):
 - `VITE_API_URL` — Backend API base URL (default: `http://localhost:5187/api`)

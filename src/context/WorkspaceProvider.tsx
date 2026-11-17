@@ -90,8 +90,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setWorkspace((current) =>
       current ? { ...current, tasks: [created, ...current.tasks] } : current,
     )
+    await refresh()
     return created
-  }, [])
+  }, [api, refresh])
 
   const updateTask = useCallback(async (id: string, patch: UpdateTaskInput) => {
     const updated = await api.updateTask(id, patch)
@@ -103,8 +104,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }
         : current,
     )
+    await refresh()
     return updated
-  }, [])
+  }, [api, refresh])
 
   const deleteTask = useCallback(async (id: string) => {
     await api.deleteTask(id)
@@ -113,7 +115,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ? { ...current, tasks: current.tasks.filter((task) => task.id !== id) }
         : current,
     )
-  }, [])
+    await refresh()
+  }, [api, refresh])
 
   const moveTask = useCallback(async (id: string, status: TaskStatus, index: number) => {
     const column = await api.moveTask(id, status, index)
@@ -125,7 +128,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         tasks: current.tasks.map((task) => byId.get(task.id) ?? task),
       }
     })
-  }, [])
+    await refresh()
+  }, [api, refresh])
 
   const toggleSubtask = useCallback(async (taskId: string, subtaskId: string) => {
     const updated = await api.toggleSubtask(taskId, subtaskId)
@@ -137,7 +141,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }
         : current,
     )
-  }, [])
+    await refresh()
+  }, [api, refresh])
 
   const addComment = useCallback(async (taskId: string, body: string) => {
     const comment = await api.addComment(taskId, body)
@@ -163,7 +168,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ),
       }
     })
-  }, [])
+    await refresh()
+  }, [api, refresh])
 
   const createProject = useCallback(async (input: api.CreateProjectInput) => {
     const created = await api.createProject(input)
@@ -172,8 +178,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ? { ...current, projects: [created, ...current.projects] }
         : current,
     )
+    await refresh()
     return created
-  }, [])
+  }, [api, refresh])
 
   const updateProjectStatus = useCallback(async (id: string, status: Project['status']) => {
     const updated = await api.updateProjectStatus(id, status)
@@ -187,8 +194,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }
         : current,
     )
+    await refresh()
     return updated
-  }, [])
+  }, [api, refresh])
 
   const updateProfile = useCallback(async (patch: { name?: string; email?: string; role?: string }) => {
     const updated = await api.updateProfile(patch)

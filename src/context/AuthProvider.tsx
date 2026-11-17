@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { authApi, clearToken, getToken, setToken, setUnauthorizedHandler, type UserResponse } from '../api/client'
+import { authApi, ApiError, clearToken, getToken, setToken, setUnauthorizedHandler, type UserResponse } from '../api/client'
 
 export interface AuthUser {
   id: string
@@ -49,6 +49,33 @@ function mapUser(dto: UserResponse): AuthUser {
   }
 }
 
+/**
+ * Display-only identity from the JWT claims, used when the API cannot be
+ * reached. Nothing here is trusted for authorization — the server remains the
+ * only authority, and the token itself is still verified on every request.
+ */
+function readUserFromToken(token: string): AuthUser | null {
+  try {
+    const payload = JSON.parse(
+      atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')),
+    ) as Record<string, unknown>
+    const id = payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier']
+    if (id === undefined) return null
+    return {
+      id: String(id),
+      name: String(payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name'] ?? ''),
+      email: String(
+        payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'] ?? '',
+      ),
+      role: String(
+        payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] ?? '',
+      ),
+    }
+  } catch {
+    return null
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -79,9 +106,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authApi
       .getProfile()
       .then((profile) => setUser(mapUser(profile)))
-      .catch(() => {
-        clearToken()
-        setUser(null)
+      .catch((error) => {
+        // A rejected token is a real sign-out. A network/5xx failure is not:
+        // keeping the token lets the shell render its error state with retry
+        // instead of silently throwing the user back to the login screen.
+        if (error instanceof ApiError && error.status === 401) {
+          clearToken()
+          setUser(null)
+          return
+        }
+        setUser(readUserFromToken(token))
       })
       .finally(() => setIsLoading(false))
   }, [])

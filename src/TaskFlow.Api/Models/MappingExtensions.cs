@@ -5,6 +5,16 @@ namespace TaskFlow.Services;
 
 public static class MappingExtensions
 {
+    /// <summary>
+    /// Timestamps are stored as SQL datetime2, which round-trips with
+    /// DateTimeKind.Unspecified. Without an explicit UTC kind System.Text.Json
+    /// emits no offset, and browsers parse the value as local time — making
+    /// fresh activity look hours old. Due dates are intentionally left alone:
+    /// they are calendar dates, not instants.
+    /// </summary>
+    private static DateTime AsUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Utc ? value : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
     public static ProjectResponseDto ToDto(this Project p) => new()
     {
         Id = p.Id,
@@ -15,7 +25,7 @@ public static class MappingExtensions
         Status = p.Status,
         DueDate = p.DueDate,
         MemberIds = p.MemberIds,
-        CreatedAt = p.CreatedAt,
+        CreatedAt = AsUtc(p.CreatedAt),
         Tasks = p.Tasks.Select(t => t.ToDto()).ToList()
     };
 
@@ -31,8 +41,8 @@ public static class MappingExtensions
         Labels = t.Labels,
         DueDate = t.DueDate,
         Order = t.Order,
-        CreatedAt = t.CreatedAt,
-        UpdatedAt = t.UpdatedAt,
+        CreatedAt = AsUtc(t.CreatedAt),
+        UpdatedAt = AsUtc(t.UpdatedAt),
         Subtasks = t.Subtasks
             .OrderBy(s => s.Id)
             .Select(s => new SubTaskResponseDto
@@ -48,7 +58,7 @@ public static class MappingExtensions
                 Id = c.Id,
                 Body = c.Body,
                 AuthorId = c.AuthorId,
-                CreatedAt = c.CreatedAt
+                CreatedAt = AsUtc(c.CreatedAt)
             }).ToList()
     };
 
@@ -67,6 +77,6 @@ public static class MappingExtensions
         Action = a.Action,
         Target = a.Target,
         Kind = a.Kind,
-        CreatedAt = a.CreatedAt
+        CreatedAt = AsUtc(a.CreatedAt)
     };
 }
