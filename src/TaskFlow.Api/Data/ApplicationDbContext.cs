@@ -15,6 +15,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<SubTask> SubTasks { get; set; }
     public DbSet<Comment> Comments { get; set; } = null!;
     public DbSet<Activity> Activities { get; set; } = null!;
+    public DbSet<ProjectMember> ProjectMembers { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -43,5 +44,25 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<ProjectTask>()
             .HasIndex(t => new { t.ProjectId, t.Status, t.Order })
             .IsUnique();
+
+        // ProjectMember: many-to-many membership between projects and users.
+        modelBuilder.Entity<ProjectMember>(b =>
+        {
+            b.HasKey(pm => pm.Id);
+            b.HasIndex(pm => new { pm.ProjectId, pm.UserId }).IsUnique();
+            b.HasOne(pm => pm.Project)
+                .WithMany(p => p.Members)
+                .HasForeignKey(pm => pm.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(pm => pm.User)
+                .WithMany()
+                .HasForeignKey(pm => pm.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Ensure Order uses enough precision for gap-based (fractional) ordering.
+        modelBuilder.Entity<ProjectTask>()
+            .Property(t => t.Order)
+            .HasColumnType("decimal(18,4)");
     }
 }

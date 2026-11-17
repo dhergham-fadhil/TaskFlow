@@ -10,7 +10,7 @@ public static class AccessControl
 {
     public static bool CanAccessProject(User? actor, Project project) =>
         actor is not null &&
-        (actor.Role == "admin" || project.OwnerId == actor.Id || project.MemberIds.Contains(actor.Id));
+        (actor.Role == "admin" || project.OwnerId == actor.Id || project.Members.Any(m => m.UserId == actor.Id));
 
     public static bool CanManageProject(User? actor, Project project) =>
         actor is not null && (actor.Role == "admin" || project.OwnerId == actor.Id);

@@ -51,7 +51,7 @@ public static async Task SeedAsync(ApplicationDbContext context, IConfiguration 
             Icon = "rocket",
             Status = "active",
             DueDate = new DateTime(2026, 12, 31),
-            MemberIds = new List<int> { user.Id },
+            Members = new List<ProjectMember> { new ProjectMember { UserId = user.Id, JoinedAt = DateTime.UtcNow } },
             OwnerId = user.Id,
             CreatedAt = DateTime.UtcNow
         };
@@ -64,7 +64,7 @@ public static async Task SeedAsync(ApplicationDbContext context, IConfiguration 
             Icon = "palette",
             Status = "active",
             DueDate = new DateTime(2026, 11, 30),
-            MemberIds = new List<int> { user.Id },
+            Members = new List<ProjectMember> { new ProjectMember { UserId = user.Id, JoinedAt = DateTime.UtcNow } },
             OwnerId = user.Id,
             CreatedAt = DateTime.UtcNow
         };
@@ -77,7 +77,7 @@ public static async Task SeedAsync(ApplicationDbContext context, IConfiguration 
             Icon = "code",
             Status = "completed",
             DueDate = null,
-            MemberIds = new List<int> { user.Id },
+            Members = new List<ProjectMember> { new ProjectMember { UserId = user.Id, JoinedAt = DateTime.UtcNow } },
             OwnerId = user.Id,
             CreatedAt = DateTime.UtcNow
         };

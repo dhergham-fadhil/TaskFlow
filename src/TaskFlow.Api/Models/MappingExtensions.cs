@@ -24,9 +24,27 @@ public static class MappingExtensions
         Icon = p.Icon,
         Status = p.Status,
         DueDate = p.DueDate,
-        MemberIds = p.MemberIds,
+        MemberIds = p.Members.Select(m => m.UserId).ToList(),
         CreatedAt = AsUtc(p.CreatedAt),
         Tasks = p.Tasks.Select(t => t.ToDto()).ToList()
+    };
+
+    /// <summary>
+    /// Lightweight project projection for workspace views: no task graph, just
+    /// identity, metadata, membership, and a task count.
+    /// </summary>
+    public static ProjectResponseDto ToWorkspaceDto(this Project p) => new()
+    {
+        Id = p.Id,
+        Name = p.Name,
+        Description = p.Description,
+        Color = p.Color,
+        Icon = p.Icon,
+        Status = p.Status,
+        DueDate = p.DueDate,
+        MemberIds = p.Members.Select(m => m.UserId).ToList(),
+        CreatedAt = AsUtc(p.CreatedAt),
+        Tasks = new List<TaskResponseDto>()
     };
 
     public static TaskResponseDto ToDto(this ProjectTask t) => new()

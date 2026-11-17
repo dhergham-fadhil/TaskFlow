@@ -37,7 +37,7 @@ public class TaskServiceTests : IDisposable
             Color = "#6D5EF8",
             Icon = "rocket",
             Status = "active",
-            MemberIds = new List<int> { user.Id },
+            Members = new List<ProjectMember> { new ProjectMember { UserId = user.Id, JoinedAt = DateTime.UtcNow } },
             OwnerId = user.Id,
             CreatedAt = DateTime.UtcNow
         };
@@ -95,7 +95,7 @@ public class TaskServiceTests : IDisposable
             Priority = "medium"
         }, userId);
 
-        Assert.Equal(1, result.Order);
+        Assert.Equal(1000m, result.Order);
         Assert.Equal("backlog", result.Status);
     }
 
@@ -364,7 +364,7 @@ public class TaskServiceTests : IDisposable
             Color = "#2563EB",
             Icon = "code",
             Status = "active",
-            MemberIds = new List<int> { userId },
+            Members = new List<ProjectMember> { new ProjectMember { UserId = userId, JoinedAt = DateTime.UtcNow } },
             OwnerId = userId,
             CreatedAt = DateTime.UtcNow
         };
@@ -387,7 +387,7 @@ public class TaskServiceTests : IDisposable
             Priority = "medium"
         }, userId);
 
-        Assert.Equal(1, t1.Order);
+        Assert.Equal(1000m, t1.Order);
         Assert.Equal(0, t2.Order);
     }
 }

@@ -26,7 +26,7 @@ public class ActivityService : IActivityService
 
         var accessibleProjectIds = await _context.Projects
             .AsNoTracking()
-            .Where(p => isAdmin || p.OwnerId == userId || p.MemberIds.Contains(userId))
+            .Where(p => isAdmin || p.OwnerId == userId || p.Members.Any(m => m.UserId == userId))
             .Select(p => p.Id)
             .ToListAsync();
 

@@ -3,6 +3,7 @@ using TaskFlow.Dtos;
 using TaskFlow.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using Microsoft.Data.SqlClient;
 
 namespace TaskFlow.Services;
 
@@ -17,6 +18,8 @@ public class TaskService : ITaskService
 
     public async Task<PagedResult<TaskResponseDto>> ListAsync(int userId, int? projectId, string? status, int page, int pageSize)
     {
+        PaginationValidation.Validate(page, pageSize);
+
         var accessibleProjectIds = await AccessibleProjectIdsAsync(userId);
 
         var query = _context.Tasks
@@ -56,56 +59,83 @@ public class TaskService : ITaskService
 
     public async Task<TaskResponseDto> CreateAsync(CreateTaskDto dto, int actorId)
     {
-        if (!AppConstants.IsValidTaskStatus(dto.Status))
-            throw new ValidationException($"Invalid status '{dto.Status}'. Allowed: {string.Join(", ", AppConstants.TaskStatuses)}");
-        if (!AppConstants.IsValidTaskPriority(dto.Priority))
-            throw new ValidationException($"Invalid priority '{dto.Priority}'. Allowed: {string.Join(", ", AppConstants.TaskPriorities)}");
+        if (!AppEnums.TaskStatuses.Contains(dto.Status, StringComparer.Ordinal))
+            throw new ValidationException($"Invalid status '{dto.Status}'. Allowed: {string.Join(", ", AppEnums.TaskStatuses)}");
+        if (!AppEnums.TaskPriorities.Contains(dto.Priority, StringComparer.Ordinal))
+            throw new ValidationException($"Invalid priority '{dto.Priority}'. Allowed: {string.Join(", ", AppEnums.TaskPriorities)}");
 
-        var project = await _context.Projects.FindAsync(dto.ProjectId)
+        var project = await _context.Projects
+            .Include(p => p.Members)
+            .FirstOrDefaultAsync(p => p.Id == dto.ProjectId)
             ?? throw new ValidationException("Project not found.");
         if (!await CanAccessProjectAsync(project.Id, actorId))
             throw new ForbiddenException("You do not have access to this project.");
 
         await EnsureAssigneeAllowedAsync(project.Id, dto.AssigneeId);
 
-        // New tasks land at the end of their destination column.
-        // Max(order) + 1 avoids collisions that Count() produces after deletions.
-        var order = (await _context.Tasks
-            .Where(t => t.ProjectId == dto.ProjectId && t.Status == dto.Status)
-            .MaxAsync(t => (int?)t.Order) ?? -1) + 1;
-
-        var task = new ProjectTask
+        // Compute a gap-based order with retry on concurrent inserts.
+        // Two concurrent creates can both read the same Max(Order) and collide
+        // on the unique index (ProjectId, Status, Order); retry up to 5 times.
+        decimal order;
+        var maxRetries = 5;
+        for (var attempt = 0; attempt < maxRetries; attempt++)
         {
-            Title = dto.Title,
-            Description = dto.Description,
-            ProjectId = dto.ProjectId,
-            Status = dto.Status,
-            Priority = dto.Priority,
-            AssigneeId = dto.AssigneeId,
-            Labels = dto.Labels,
-            DueDate = dto.DueDate,
-            Order = order,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
+            var lastOrder = await _context.Tasks
+                .Where(t => t.ProjectId == dto.ProjectId && t.Status == dto.Status)
+                .MaxAsync(t => (decimal?)t.Order);
+            order = lastOrder.HasValue ? (lastOrder.Value + 1000m) : 0m;
 
-        foreach (var sub in dto.Subtasks.Where(s => !string.IsNullOrWhiteSpace(s.Title)))
-            task.Subtasks.Add(new SubTask { Title = sub.Title, Done = sub.Done });
+            var task = new ProjectTask
+            {
+                Title = dto.Title,
+                Description = dto.Description,
+                ProjectId = dto.ProjectId,
+                Status = dto.Status,
+                Priority = dto.Priority,
+                AssigneeId = dto.AssigneeId,
+                Labels = dto.Labels,
+                DueDate = dto.DueDate,
+                Order = order,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
 
-        _context.Tasks.Add(task);
-        await _context.SaveChangesAsync();
+            foreach (var sub in dto.Subtasks.Where(s => !string.IsNullOrWhiteSpace(s.Title)))
+                task.Subtasks.Add(new SubTask { Title = sub.Title, Done = sub.Done });
 
-        await RecordAsync(new Activity
-        {
-            ActorId = actorId,
-            Action = "created",
-            Target = task.Title,
-            Kind = "create",
-            ProjectId = task.ProjectId,
-            TaskId = task.Id
-        });
+            _context.Tasks.Add(task);
 
-        return await LoadDtoAsync(task.Id);
+            // Task creation + activity log are atomic: a single SaveChanges.
+            _context.Activities.Add(new Activity
+            {
+                ActorId = actorId,
+                Action = "created",
+                Target = task.Title,
+                Kind = "create",
+                ProjectId = task.ProjectId,
+                TaskId = task.Id
+            });
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                return await LoadDtoAsync(task.Id);
+            }
+            catch (SqlException ex) when ((ex.Number == 2601 || ex.Number == 2627) && attempt < maxRetries - 1)
+            {
+                // Unique index collision — detach all tracked entities from the
+                // failed attempt and retry with a fresh order.
+                var staleEntries = _context.ChangeTracker.Entries()
+                    .Where(e => e.State == EntityState.Added &&
+                        (e.Entity is ProjectTask || e.Entity is Activity || e.Entity is SubTask))
+                    .ToList();
+                foreach (var entry in staleEntries)
+                    entry.State = EntityState.Detached;
+                continue;
+            }
+        }
+
+        throw new ValidationException("Unable to create task due to a concurrent ordering conflict. Please retry.");
     }
 
     public async Task<TaskResponseDto?> UpdateAsync(int id, JsonElement patch, int actorId)
@@ -144,10 +174,11 @@ public class TaskService : ITaskService
                 !(patch.TryGetProperty("order", out var explicitOrder) && explicitOrder.ValueKind is JsonValueKind.Number))
             {
                 // Moving columns without an explicit index appends the task to the
-                // end of the destination column, keeping orders unique per column.
-                task.Order = (await _context.Tasks
+                // end of the destination column using a gap-based decimal order.
+                var lastOrder = await _context.Tasks
                     .Where(t => t.ProjectId == task.ProjectId && t.Status == newStatus)
-                    .MaxAsync(t => (int?)t.Order) ?? -1) + 1;
+                    .MaxAsync(t => (decimal?)t.Order);
+                task.Order = (lastOrder ?? 0m) + 1000m;
             }
             task.Status = newStatus;
         }
@@ -184,9 +215,8 @@ public class TaskService : ITaskService
 
         task.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
-
-        await RecordAsync(new Activity
+        // Task update + activity log are atomic.
+        _context.Activities.Add(new Activity
         {
             ActorId = actorId,
             Action = "updated",
@@ -195,6 +225,8 @@ public class TaskService : ITaskService
             ProjectId = task.ProjectId,
             TaskId = task.Id
         });
+
+        await _context.SaveChangesAsync();
 
         return await LoadDtoAsync(task.Id);
     }
@@ -207,9 +239,9 @@ public class TaskService : ITaskService
         if (!await CanAccessTask(id, actorId)) return false;
 
         _context.Tasks.Remove(task);
-        await _context.SaveChangesAsync();
 
-        await RecordAsync(new Activity
+        // Task deletion + activity log are atomic.
+        _context.Activities.Add(new Activity
         {
             ActorId = actorId,
             Action = "deleted",
@@ -218,12 +250,14 @@ public class TaskService : ITaskService
             ProjectId = task.ProjectId
         });
 
+        await _context.SaveChangesAsync();
+
         return true;
     }
 
     public async Task<List<TaskResponseDto>?> MoveAsync(int id, MoveTaskDto dto, int actorId)
     {
-        if (!AppConstants.IsValidTaskStatus(dto.Status))
+        if (!AppEnums.TaskStatuses.Contains(dto.Status, StringComparer.Ordinal))
             throw new ValidationException($"Invalid status '{dto.Status}'.");
 
         var task = await _context.Tasks
@@ -234,35 +268,126 @@ public class TaskService : ITaskService
 
         if (!await CanAccessTask(id, actorId)) return null;
 
-        var index = Math.Max(0, dto.Index);
-
-        var column = await _context.Tasks
-            .Where(t => t.ProjectId == task.ProjectId && t.Status == dto.Status && t.Id != id)
-            .OrderBy(t => t.Order)
-            .ToListAsync();
-
-        index = Math.Min(index, column.Count);
-        column.Insert(index, task);
-
-        for (var i = 0; i < column.Count; i++)
-            column[i].Order = i;
-
-        task.Status = dto.Status;
-        task.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        await RecordAsync(new Activity
+        // Concurrent drag-and-drop: retry on RowVersion conflicts.
+        var moveRetries = 5;
+        for (var attempt = 0; attempt < moveRetries; attempt++)
         {
-            ActorId = actorId,
-            Action = "moved",
-            Target = task.Title,
-            Kind = "move",
-            ProjectId = task.ProjectId,
-            TaskId = task.Id
-        });
+            // Re-read the task each attempt so RowVersion is current.
+            var currentTask = await _context.Tasks
+                .Include(t => t.Subtasks)
+                .Include(t => t.Comments)
+                .FirstOrDefaultAsync(t => t.Id == id);
+            if (currentTask is null) return null;
 
-        return column.Select(t => t.ToDto()).ToList();
+            if (!await CanAccessTask(id, actorId)) return null;
+
+            var column = await _context.Tasks
+                .Where(t => t.ProjectId == currentTask.ProjectId && t.Status == dto.Status && t.Id != id)
+                .OrderBy(t => t.Order)
+                .ThenBy(t => t.Id)
+                .ToListAsync();
+
+            var index = Math.Clamp(dto.Index, 0, column.Count);
+
+            // Gap-based ordering: compute a fractional order between neighbours.
+            decimal newOrder;
+            if (column.Count == 0)
+            {
+                newOrder = 0m;
+            }
+            else if (index == 0)
+            {
+                var first = column[0];
+                newOrder = first.Order > 0 ? first.Order / 2m : 0m;
+            }
+            else if (index == column.Count)
+            {
+                var last = column[^1];
+                newOrder = last.Order + 1000m;
+            }
+            else
+            {
+                var prev = column[index - 1];
+                var next = column[index];
+                var gap = next.Order - prev.Order;
+                if (gap < 1m)
+                {
+                    // Gaps are exhausted — rebalance the whole column to restore headroom.
+                    for (var i = 0; i < column.Count; i++)
+                        column[i].Order = i * 1000m;
+                    newOrder = index * 1000m;
+                    // Shift tasks at/after the insertion point down by one slot.
+                    for (var i = column.Count - 1; i >= index; i--)
+                        column[i].Order = (i + 1) * 1000m;
+                }
+                else
+                {
+                    newOrder = (prev.Order + next.Order) / 2m;
+                }
+            }
+
+            currentTask.Order = newOrder;
+            currentTask.Status = dto.Status;
+            currentTask.UpdatedAt = DateTime.UtcNow;
+
+            // Remove any previously tracked activity for this attempt and add fresh one.
+            var existingActivity = _context.ChangeTracker.Entries<Activity>()
+                .FirstOrDefault(a => a.Entity.TaskId == id && a.Entity.Kind == "move" && a.State == EntityState.Added);
+            if (existingActivity is not null)
+                existingActivity.State = EntityState.Detached;
+
+            _context.Activities.Add(new Activity
+            {
+                ActorId = actorId,
+                Action = "moved",
+                Target = currentTask.Title,
+                Kind = "move",
+                ProjectId = currentTask.ProjectId,
+                TaskId = currentTask.Id
+            });
+
+            try
+            {
+                // Single SaveChanges: task state + activity log. EF Core wraps the
+                // save in a transaction, so either both commit or neither does.
+                await _context.SaveChangesAsync();
+
+                // Return the full column in its new order.
+                var updatedColumn = await _context.Tasks
+                    .Include(t => t.Subtasks)
+                    .Include(t => t.Comments)
+                    .Where(t => t.ProjectId == currentTask.ProjectId && t.Status == dto.Status)
+                    .OrderBy(t => t.Order)
+                    .ThenBy(t => t.Id)
+                    .Select(t => t.ToDto())
+                    .ToListAsync();
+
+                return updatedColumn;
+            }
+            catch (DbUpdateConcurrencyException) when (attempt < moveRetries - 1)
+            {
+                // RowVersion conflict — another request moved this task first.
+                // Detach stale activity and retry with fresh task state.
+                var staleActivities = _context.ChangeTracker.Entries<Activity>()
+                    .Where(a => a.Entity.TaskId == id && a.Entity.Kind == "move" && a.State == EntityState.Added)
+                    .ToList();
+                foreach (var entry in staleActivities)
+                    entry.State = EntityState.Detached;
+                continue;
+            }
+            catch (SqlException ex) when ((ex.Number == 2601 || ex.Number == 2627) && attempt < moveRetries - 1)
+            {
+                // Unique index collision during rebalance — retry with fresh state.
+                var staleActivities = _context.ChangeTracker.Entries<Activity>()
+                    .Where(a => a.Entity.TaskId == id && a.Entity.Kind == "move" && a.State == EntityState.Added)
+                    .ToList();
+                foreach (var entry in staleActivities)
+                    entry.State = EntityState.Detached;
+                continue;
+            }
+        }
+
+        throw new ValidationException("This task was moved by another request. Refresh and try again.");
     }
 
     public async Task<TaskResponseDto?> ToggleSubtaskAsync(int taskId, int subtaskId, int actorId)
@@ -297,9 +422,9 @@ public class TaskService : ITaskService
         };
 
         _context.Comments.Add(comment);
-        await _context.SaveChangesAsync();
 
-        await RecordAsync(new Activity
+        // Comment creation + activity log are atomic: a single SaveChanges.
+        _context.Activities.Add(new Activity
         {
             ActorId = actorId,
             Action = "commented on",
@@ -308,6 +433,8 @@ public class TaskService : ITaskService
             ProjectId = task.ProjectId,
             TaskId = taskId
         });
+
+        await _context.SaveChangesAsync();
 
         return new CommentResponseDto
         {
@@ -395,27 +522,27 @@ public class TaskService : ITaskService
 
     private async Task<bool> CanAccessProjectAsync(int projectId, int userId)
     {
-        var project = await _context.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == projectId);
-        if (project is null) return false;
-
+        // Admin short-circuit: one lightweight query instead of loading the full
+        // project graph and the user entity separately.
         var actor = await _context.Users
             .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId);
-        return AccessControl.CanAccessProject(actor, project);
+            .Where(u => u.Id == userId)
+            .Select(u => u.Role)
+            .FirstOrDefaultAsync();
+        if (actor == "admin") return true;
+
+        return await _context.Projects
+            .AsNoTracking()
+            .Where(p => p.Id == projectId && (p.OwnerId == userId || p.Members.Any(m => m.UserId == userId)))
+            .AnyAsync();
     }
 
     private async Task<List<int>> AccessibleProjectIdsAsync(int userId) =>
         await _context.Projects
             .AsNoTracking()
-            .Where(p => p.OwnerId == userId || p.MemberIds.Contains(userId))
+            .Where(p => p.OwnerId == userId || p.Members.Any(m => m.UserId == userId))
             .Select(p => p.Id)
             .ToListAsync();
-
-    private Task RecordAsync(Activity activity)
-    {
-        _context.Activities.Add(activity);
-        return _context.SaveChangesAsync();
-    }
 }
+
+

@@ -45,7 +45,11 @@ public class ProjectServiceTests : IDisposable
             Color = "#6D5EF8",
             Icon = "rocket",
             Status = "active",
-            MemberIds = new List<int> { owner.Id, member.Id },
+            Members = new List<ProjectMember>
+            {
+                new ProjectMember { UserId = owner.Id, JoinedAt = DateTime.UtcNow },
+                new ProjectMember { UserId = member.Id, JoinedAt = DateTime.UtcNow }
+            },
             OwnerId = owner.Id,
             CreatedAt = DateTime.UtcNow
         };
@@ -147,7 +151,10 @@ public class ProjectServiceTests : IDisposable
         var memberId = GetMemberId();
         var projectId = GetProjectId();
 
-        _context.Projects.First().MemberIds = new List<int> { ownerId };
+        _context.Projects.First().Members = new List<ProjectMember>
+        {
+            new ProjectMember { UserId = ownerId, JoinedAt = DateTime.UtcNow }
+        };
         await _context.SaveChangesAsync();
 
         var result = await service.AddMemberAsync(projectId, memberId, ownerId);

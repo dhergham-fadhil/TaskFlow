@@ -17,13 +17,16 @@ public class ProjectService : IProjectService
 
     public async Task<PagedResult<ProjectResponseDto>> ListAsync(int userId, int page, int pageSize)
     {
+        PaginationValidation.Validate(page, pageSize);
+
         var query = _context.Projects
+            .Include(p => p.Members)
             .Include(p => p.Tasks)
                 .ThenInclude(t => t.Subtasks)
             .Include(p => p.Tasks)
                 .ThenInclude(t => t.Comments)
             .AsNoTracking()
-            .Where(p => p.OwnerId == userId || p.MemberIds.Contains(userId));
+            .Where(p => p.OwnerId == userId || p.Members.Any(m => m.UserId == userId));
 
         var total = await query.CountAsync();
         var items = await query
@@ -39,6 +42,7 @@ public class ProjectService : IProjectService
     public async Task<ProjectResponseDto?> GetAsync(int id, int userId)
     {
         var project = await _context.Projects
+            .Include(p => p.Members)
             .Include(p => p.Tasks)
                 .ThenInclude(t => t.Subtasks)
             .Include(p => p.Tasks)
@@ -54,7 +58,7 @@ public class ProjectService : IProjectService
 
     public async Task<ProjectResponseDto> CreateAsync(CreateProjectDto dto, int ownerId)
     {
-        if (!AppConstants.IsValidProjectStatus(dto.Status))
+        if (!AppEnums.ProjectStatuses.Contains(dto.Status, StringComparer.Ordinal))
             throw new ValidationException($"Invalid status '{dto.Status}'. Allowed: {string.Join(", ", AppConstants.ProjectStatuses)}");
         if (!AppConstants.ProjectIcons.Contains(dto.Icon, StringComparer.Ordinal))
             throw new ValidationException($"Invalid icon '{dto.Icon}'. Allowed: {string.Join(", ", AppConstants.ProjectIcons)}");
@@ -71,8 +75,9 @@ public class ProjectService : IProjectService
                 throw new ValidationException($"Unknown member ids: {string.Join(", ", unknown)}.");
         }
 
-        var members = new List<int> { ownerId };
-        members.AddRange(dto.MemberIds.Where(id => id != ownerId));
+        var memberIds = new List<int> { ownerId };
+        memberIds.AddRange(dto.MemberIds.Where(id => id != ownerId));
+        memberIds = memberIds.Distinct().ToList();
 
         var project = new Project
         {
@@ -82,15 +87,15 @@ public class ProjectService : IProjectService
             Icon = dto.Icon,
             Status = dto.Status,
             DueDate = dto.DueDate,
-            MemberIds = members.Distinct().ToList(),
             OwnerId = ownerId,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            Members = memberIds.Select(id => new ProjectMember { UserId = id, JoinedAt = DateTime.UtcNow }).ToList()
         };
 
         _context.Projects.Add(project);
-        await _context.SaveChangesAsync();
 
-        await RecordAsync(new Activity
+        // Project creation + initial activity log are atomic: a single SaveChanges.
+        _context.Activities.Add(new Activity
         {
             ActorId = ownerId,
             Action = "created",
@@ -98,6 +103,8 @@ public class ProjectService : IProjectService
             Kind = "project",
             ProjectId = project.Id
         });
+
+        await _context.SaveChangesAsync();
 
         return project.ToDto();
     }
@@ -164,15 +171,22 @@ public class ProjectService : IProjectService
                 throw new ValidationException($"Unknown member ids: {string.Join(", ", unknown)}.");
 
             // The owner always keeps membership; removing them would orphan the project.
-            var next = requestedIds.Contains(project.OwnerId)
-                ? requestedIds
-                : requestedIds.Prepend(project.OwnerId).ToList();
-            project.MemberIds = next;
+            if (!requestedIds.Contains(project.OwnerId))
+                requestedIds.Add(project.OwnerId);
+
+            // Replace membership: add missing, remove extras.
+            var currentMemberIds = project.Members.Select(m => m.UserId).ToHashSet();
+            var toAdd = requestedIds.Except(currentMemberIds).ToList();
+            var toRemove = project.Members.Where(m => !requestedIds.Contains(m.UserId)).ToList();
+
+            foreach (var memberUserId in toAdd)
+                project.Members.Add(new ProjectMember { UserId = memberUserId, JoinedAt = DateTime.UtcNow });
+            foreach (var membership in toRemove)
+                project.Members.Remove(membership);
         }
 
-        await _context.SaveChangesAsync();
-
-        await RecordAsync(new Activity
+        // Project update + activity log are atomic.
+        _context.Activities.Add(new Activity
         {
             ActorId = userId,
             Action = "updated",
@@ -180,6 +194,8 @@ public class ProjectService : IProjectService
             Kind = "project",
             ProjectId = project.Id
         });
+
+        await _context.SaveChangesAsync();
 
         return project.ToDto();
     }
@@ -196,9 +212,9 @@ public class ProjectService : IProjectService
         if (!AccessControl.CanManageProject(actor, project)) return null;
 
         project.Status = status;
-        await _context.SaveChangesAsync();
 
-        await RecordAsync(new Activity
+        // Status change + activity log are atomic.
+        _context.Activities.Add(new Activity
         {
             ActorId = userId,
             Action = status == "paused" ? "paused" : "updated",
@@ -206,6 +222,8 @@ public class ProjectService : IProjectService
             Kind = "project",
             ProjectId = project.Id
         });
+
+        await _context.SaveChangesAsync();
 
         return project.ToDto();
     }
@@ -219,9 +237,9 @@ public class ProjectService : IProjectService
         if (!AccessControl.CanManageProject(actor, project)) return false;
 
         _context.Projects.Remove(project);
-        await _context.SaveChangesAsync();
 
-        await RecordAsync(new Activity
+        // Project deletion + activity log are atomic.
+        _context.Activities.Add(new Activity
         {
             ActorId = userId,
             Action = "deleted",
@@ -230,12 +248,16 @@ public class ProjectService : IProjectService
             ProjectId = project.Id
         });
 
+        await _context.SaveChangesAsync();
+
         return true;
     }
 
     public async Task<bool> AddMemberAsync(int projectId, int memberId, int userId)
     {
-        var project = await _context.Projects.FindAsync(projectId);
+        var project = await _context.Projects
+            .Include(p => p.Members)
+            .FirstOrDefaultAsync(p => p.Id == projectId);
         if (project is null) return false;
 
         var actor = await _context.Users.FindAsync(userId);
@@ -244,26 +266,31 @@ public class ProjectService : IProjectService
         var member = await _context.Users.FindAsync(memberId);
         if (member is null) return false;
 
-        if (!project.MemberIds.Contains(memberId))
-            project.MemberIds.Add(memberId);
-
-        await _context.SaveChangesAsync();
-
-        await RecordAsync(new Activity
+        if (!project.Members.Any(m => m.UserId == memberId))
         {
-            ActorId = userId,
-            Action = "updated members of",
-            Target = project.Name,
-            Kind = "project",
-            ProjectId = project.Id
-        });
+            project.Members.Add(new ProjectMember { UserId = memberId, JoinedAt = DateTime.UtcNow });
+
+            // Member addition + activity log are atomic.
+            _context.Activities.Add(new Activity
+            {
+                ActorId = userId,
+                Action = "updated members of",
+                Target = project.Name,
+                Kind = "project",
+                ProjectId = project.Id
+            });
+
+            await _context.SaveChangesAsync();
+        }
 
         return true;
     }
 
     public async Task<bool> RemoveMemberAsync(int projectId, int memberId, int userId)
     {
-        var project = await _context.Projects.FindAsync(projectId);
+        var project = await _context.Projects
+            .Include(p => p.Members)
+            .FirstOrDefaultAsync(p => p.Id == projectId);
         if (project is null) return false;
 
         var actor = await _context.Users.FindAsync(userId);
@@ -272,24 +299,25 @@ public class ProjectService : IProjectService
         // The owner cannot be removed from their own project.
         if (memberId == project.OwnerId) return false;
 
-        project.MemberIds.RemoveAll(id => id == memberId);
-        await _context.SaveChangesAsync();
-
-        await RecordAsync(new Activity
+        var membership = project.Members.FirstOrDefault(m => m.UserId == memberId);
+        if (membership is not null)
         {
-            ActorId = userId,
-            Action = "updated members of",
-            Target = project.Name,
-            Kind = "project",
-            ProjectId = project.Id
-        });
+            project.Members.Remove(membership);
+
+            // Member removal + activity log are atomic.
+            _context.Activities.Add(new Activity
+            {
+                ActorId = userId,
+                Action = "updated members of",
+                Target = project.Name,
+                Kind = "project",
+                ProjectId = project.Id
+            });
+
+            await _context.SaveChangesAsync();
+        }
 
         return true;
     }
-
-    private Task RecordAsync(Activity activity)
-    {
-        _context.Activities.Add(activity);
-        return _context.SaveChangesAsync();
-    }
 }
+

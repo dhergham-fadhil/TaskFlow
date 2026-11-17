@@ -1,6 +1,7 @@
-namespace TaskFlow.Models;
-using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
+using Microsoft.EntityFrameworkCore;
+
+namespace TaskFlow.Models;
 
 public class ProjectTask
 {
@@ -14,7 +15,7 @@ public class ProjectTask
     public int? AssigneeId { get; set; }            // User ID (nullable)
     public List<string> Labels { get; set; } = new();
     public DateTime? DueDate { get; set; }
-    public int Order { get; set; } = 0;             // Position in column
+    public decimal Order { get; set; } = 0;         // Position in column (gap-based, fractional)
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

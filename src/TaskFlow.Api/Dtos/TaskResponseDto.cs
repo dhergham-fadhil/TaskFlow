@@ -11,7 +11,7 @@ public class TaskResponseDto
     public int? AssigneeId { get; set; }
     public List<string> Labels { get; set; } = new();
     public DateTime? DueDate { get; set; }
-    public int Order { get; set; }
+    public decimal Order { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public List<SubTaskResponseDto> Subtasks { get; set; } = new();

@@ -115,7 +115,7 @@ namespace TaskFlow.Api.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.PrimitiveCollection<string>("MemberIds")
+                    b.PrimitiveCollection<string>("Labels")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
@@ -133,6 +133,31 @@ namespace TaskFlow.Api.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Projects");
+                });
+
+            modelBuilder.Entity("TaskFlow.Models.ProjectMember", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("JoinedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("ProjectId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("ProjectMembers");
                 });
 
             modelBuilder.Entity("TaskFlow.Models.ProjectTask", b =>
@@ -160,8 +185,8 @@ namespace TaskFlow.Api.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<int>("Order")
-                        .HasColumnType("int");
+                    b.Property<decimal>("Order")
+                        .HasColumnType("decimal(18,4)");
 
                     b.Property<string>("Priority")
                         .IsRequired()
@@ -298,7 +323,26 @@ namespace TaskFlow.Api.Migrations
 
             modelBuilder.Entity("TaskFlow.Models.Project", b =>
                 {
+                    b.Navigation("Members");
                     b.Navigation("Tasks");
+                });
+
+            modelBuilder.Entity("TaskFlow.Models.ProjectMember", b =>
+                {
+                    b.HasOne("TaskFlow.Models.Project", "Project")
+                        .WithMany("Members")
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TaskFlow.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TaskFlow.Models.ProjectTask", b =>
