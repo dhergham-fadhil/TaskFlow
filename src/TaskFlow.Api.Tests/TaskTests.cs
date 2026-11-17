@@ -3,12 +3,14 @@ using TaskFlow.Dtos;
 using TaskFlow.Models;
 using TaskFlow.Services;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace TaskFlow.Api.Tests;
 
 public class TaskServiceTests : IDisposable
 {
     private readonly ApplicationDbContext _context;
+    private readonly FakeAuthorizationService _auth;
 
     public TaskServiceTests()
     {
@@ -16,6 +18,7 @@ public class TaskServiceTests : IDisposable
             .UseInMemoryDatabase($"tasks_{Guid.NewGuid():N}")
             .Options;
         _context = new ApplicationDbContext(options);
+        _auth = new FakeAuthorizationService();
         SeedDatabase().Wait();
     }
 
@@ -73,7 +76,7 @@ public class TaskServiceTests : IDisposable
         await _context.SaveChangesAsync();
     }
 
-    private TaskService CreateService() => new(_context);
+    private TaskService CreateService() => new(_context, _auth);
 
     private int GetUserId() => _context.Users.First().Id;
     private int GetProjectId() => _context.Projects.First().Id;
@@ -190,8 +193,7 @@ public class TaskServiceTests : IDisposable
         var userId = GetUserId();
         var taskId = _context.Tasks.First().Id;
 
-        var result = await service.UpdateAsync(taskId, System.Text.Json.JsonDocument.Parse(
-            @"{""title"":""Updated Title"",""priority"":""urgent""}").RootElement, userId);
+        var result = await service.UpdateAsync(taskId, new UpdateTaskDto { Title = "Updated Title", Priority = "urgent" }, userId);
 
         Assert.NotNull(result);
         Assert.Equal("Updated Title", result.Title);
@@ -220,8 +222,7 @@ public class TaskServiceTests : IDisposable
 
         var taskId = created.Id;
 
-        var result = await service.UpdateAsync(taskId, System.Text.Json.JsonDocument.Parse(
-            @"{""dueDate"":null}").RootElement, userId);
+        var result = await service.UpdateAsync(taskId, new UpdateTaskDto { DueDate = JsonSerializer.Deserialize<JsonElement>("null") }, userId);
 
         Assert.Null(result!.DueDate);
 
@@ -247,8 +248,7 @@ public class TaskServiceTests : IDisposable
 
         var taskId = created.Id;
 
-        var result = await service.UpdateAsync(taskId, System.Text.Json.JsonDocument.Parse(
-            @"{""assigneeId"":null}").RootElement, userId);
+        var result = await service.UpdateAsync(taskId, new UpdateTaskDto { AssigneeId = JsonSerializer.Deserialize<JsonElement>("null") }, userId);
 
         Assert.Null(result!.AssigneeId);
 

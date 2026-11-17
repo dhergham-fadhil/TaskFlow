@@ -62,8 +62,7 @@ public class UserServiceTests : IDisposable
         var service = CreateService();
         var userId = _context.Users.First(u => u.Email == "user@example.com").Id;
 
-        var result = await service.UpdateProfileAsync(userId, System.Text.Json.JsonDocument.Parse(
-            @"{""name"":""Updated Name"",""email"":""updated@example.com""}").RootElement);
+        var result = await service.UpdateProfileAsync(userId, new UpdateProfileDto { Name = "Updated Name", Email = "updated@example.com" });
 
         Assert.NotNull(result);
         Assert.Equal("Updated Name", result.Name);
@@ -80,8 +79,7 @@ public class UserServiceTests : IDisposable
         var service = CreateService();
         var userId = _context.Users.First(u => u.Email == "user@example.com").Id;
 
-        await Assert.ThrowsAsync<ValidationException>(() => service.UpdateProfileAsync(userId, System.Text.Json.JsonDocument.Parse(
-            @"{""email"":""admin@example.com""}").RootElement));
+        await Assert.ThrowsAsync<ValidationException>(() => service.UpdateProfileAsync(userId, new UpdateProfileDto { Email = "admin@example.com" }));
     }
 
     [Fact]
@@ -90,8 +88,7 @@ public class UserServiceTests : IDisposable
         var service = CreateService();
         var userId = _context.Users.First(u => u.Email == "user@example.com").Id;
 
-        await Assert.ThrowsAsync<ValidationException>(() => service.UpdateProfileAsync(userId, System.Text.Json.JsonDocument.Parse(
-            @"{""email"":""not-an-email""}").RootElement));
+        await Assert.ThrowsAsync<ValidationException>(() => service.UpdateProfileAsync(userId, new UpdateProfileDto { Email = "not-an-email" }));
     }
 
     [Fact]
@@ -100,8 +97,7 @@ public class UserServiceTests : IDisposable
         var service = CreateService();
         var userId = _context.Users.First(u => u.Email == "user@example.com").Id;
 
-        await Assert.ThrowsAsync<ValidationException>(() => service.UpdateProfileAsync(userId, System.Text.Json.JsonDocument.Parse(
-            @"{""name"":""   ""}").RootElement));
+        await Assert.ThrowsAsync<ValidationException>(() => service.UpdateProfileAsync(userId, new UpdateProfileDto { Name = "   " }));
     }
 
     [Fact]
@@ -110,8 +106,7 @@ public class UserServiceTests : IDisposable
         var service = CreateService();
         var regularUserId = _context.Users.First(u => u.Email == "user@example.com").Id;
 
-        await Assert.ThrowsAsync<ForbiddenException>(() => service.UpdateProfileAsync(regularUserId, System.Text.Json.JsonDocument.Parse(
-            @"{""role"":""admin""}").RootElement));
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.UpdateProfileAsync(regularUserId, new UpdateProfileDto { Role = "admin" }));
     }
 
     [Fact]
@@ -120,8 +115,7 @@ public class UserServiceTests : IDisposable
         var service = CreateService();
         var adminId = _context.Users.First(u => u.Email == "admin@example.com").Id;
 
-        var result = await service.UpdateProfileAsync(adminId, System.Text.Json.JsonDocument.Parse(
-            "{\"role\":\"viewer\"}").RootElement);
+        var result = await service.UpdateProfileAsync(adminId, new UpdateProfileDto { Role = "viewer" });
 
         Assert.NotNull(result);
         Assert.Equal("viewer", result.Role);

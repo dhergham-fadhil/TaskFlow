@@ -71,6 +71,7 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
 builder.Services.AddScoped<IActivityService, ActivityService>();
+builder.Services.AddScoped<IAuthorizationService, AuthorizationService>();
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(
@@ -217,7 +218,7 @@ api.MapPost("/projects", async (CreateProjectDto dto, ClaimsPrincipal user, IPro
     return Results.Created($"/api/projects/{created.Id}", created);
 });
 
-api.MapPut("/projects/{id}", async (int id, JsonElement patch, ClaimsPrincipal user, IProjectService projectService) =>
+api.MapPut("/projects/{id}", async (int id, UpdateProjectDto patch, ClaimsPrincipal user, IProjectService projectService) =>
 {
     var updated = await projectService.UpdateAsync(id, patch, GetUserId(user));
     return updated is not null ? Results.Ok(updated) : Results.NotFound();
@@ -265,7 +266,7 @@ api.MapGet("/tasks/{id}", async (int id, ClaimsPrincipal user, ITaskService task
     return task is not null ? Results.Ok(task) : Results.NotFound();
 });
 
-api.MapPut("/tasks/{id}", async (int id, JsonElement patch, ClaimsPrincipal user, ITaskService taskService) =>
+api.MapPut("/tasks/{id}", async (int id, UpdateTaskDto patch, ClaimsPrincipal user, ITaskService taskService) =>
 {
     var updated = await taskService.UpdateAsync(id, patch, GetUserId(user));
     return updated is not null ? Results.Ok(updated) : Results.NotFound();
@@ -307,7 +308,7 @@ api.MapGet("/users/me", async (ClaimsPrincipal user, IUserService userService) =
     return profile is not null ? Results.Ok(profile) : Results.NotFound();
 });
 
-api.MapPut("/users/me", async (JsonElement patch, ClaimsPrincipal user, IUserService userService) =>
+api.MapPut("/users/me", async (ClaimsPrincipal user, IUserService userService, UpdateProfileDto patch) =>
 {
     var updated = await userService.UpdateProfileAsync(GetUserId(user), patch);
     return updated is not null ? Results.Ok(updated) : Results.NotFound();

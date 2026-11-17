@@ -2,17 +2,18 @@ using TaskFlow.Models;
 using TaskFlow.Dtos;
 using TaskFlow.Data;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace TaskFlow.Services;
 
 public class ProjectService : IProjectService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IAuthorizationService _authorization;
 
-    public ProjectService(ApplicationDbContext context)
+    public ProjectService(ApplicationDbContext context, IAuthorizationService authorization)
     {
         _context = context;
+        _authorization = authorization;
     }
 
     public async Task<PagedResult<ProjectResponseDto>> ListAsync(int userId, int page, int pageSize)
@@ -52,8 +53,7 @@ public class ProjectService : IProjectService
 
         if (project is null) return null;
 
-        var actor = await _context.Users.FindAsync(userId);
-        return AccessControl.CanAccessProject(actor, project) ? project.ToDto() : null;
+        return await _authorization.CanAccessProjectAsync(id, userId) ? project.ToDto() : null;
     }
 
     public async Task<ProjectResponseDto> CreateAsync(CreateProjectDto dto, int ownerId)
@@ -109,68 +109,66 @@ public class ProjectService : IProjectService
         return project.ToDto();
     }
 
-    public async Task<ProjectResponseDto?> UpdateAsync(int id, System.Text.Json.JsonElement patch, int userId)
+    public async Task<ProjectResponseDto?> UpdateAsync(int id, UpdateProjectDto patch, int userId)
     {
         var project = await _context.Projects
-            .Include(p => p.Tasks)
-                .ThenInclude(t => t.Subtasks)
-            .Include(p => p.Tasks)
-                .ThenInclude(t => t.Comments)
+            .Include(p => p.Members)
             .FirstOrDefaultAsync(p => p.Id == id);
 
         if (project is null) return null;
 
-        var actor = await _context.Users.FindAsync(userId);
-        if (!AccessControl.CanManageProject(actor, project)) return null;
+        if (!await _authorization.CanManageProjectAsync(id, userId)) return null;
 
-        if (patch.TryGetProperty("name", out var name) && name.ValueKind is System.Text.Json.JsonValueKind.String)
+        if (!string.IsNullOrWhiteSpace(patch.Name))
         {
-            var newName = name.GetString()?.Trim();
+            var newName = patch.Name.Trim();
             if (string.IsNullOrWhiteSpace(newName))
                 throw new ValidationException("Name cannot be empty.");
             project.Name = newName;
         }
 
-        if (patch.TryGetProperty("description", out var description) && description.ValueKind is System.Text.Json.JsonValueKind.String)
-            project.Description = description.GetString() ?? project.Description;
+        if (patch.Description is not null)
+            project.Description = patch.Description;
 
-        if (patch.TryGetProperty("color", out var color) && color.ValueKind is System.Text.Json.JsonValueKind.String)
-            project.Color = color.GetString() ?? project.Color;
-
-        if (patch.TryGetProperty("icon", out var icon) && icon.ValueKind is System.Text.Json.JsonValueKind.String)
+        if (!string.IsNullOrWhiteSpace(patch.Color))
         {
-            var value = icon.GetString() ?? project.Icon;
-            if (!AppConstants.ProjectIcons.Contains(value, StringComparer.Ordinal))
+            if (!System.Text.RegularExpressions.Regex.IsMatch(patch.Color, @"^#[0-9a-fA-F]{6}$"))
+                throw new ValidationException($"Invalid color '{patch.Color}'.");
+            project.Color = patch.Color;
+        }
+
+        if (!string.IsNullOrWhiteSpace(patch.Icon))
+        {
+            var value = patch.Icon;
+            if (!AppEnums.ProjectIcons.Contains(value, StringComparer.Ordinal))
                 throw new ValidationException($"Invalid icon '{value}'.");
             project.Icon = value;
         }
 
-        if (patch.TryGetProperty("status", out var status) && status.ValueKind is System.Text.Json.JsonValueKind.String)
+        if (!string.IsNullOrWhiteSpace(patch.Status))
         {
-            if (!AppConstants.IsValidProjectStatus(status.GetString()))
-                throw new ValidationException($"Invalid status '{status.GetString()}'.");
-            project.Status = status.GetString()!;
+            if (!AppEnums.ProjectStatuses.Contains(patch.Status, StringComparer.Ordinal))
+                throw new ValidationException($"Invalid status '{patch.Status}'. Allowed: {string.Join(", ", AppEnums.ProjectStatuses)}");
+            project.Status = patch.Status;
         }
 
-        if (patch.TryGetProperty("dueDate", out var dueDate))
-            project.DueDate = dueDate.ValueKind is System.Text.Json.JsonValueKind.Null
-                ? null
-                : dueDate.Deserialize<DateTime?>();
+        if (patch.DueDate.HasValue)
+            project.DueDate = patch.DueDate.Value;
 
-        if (patch.TryGetProperty("memberIds", out var memberIds) && memberIds.ValueKind is System.Text.Json.JsonValueKind.Array)
+        if (patch.MemberIds is not null)
         {
-            var requestedIds = memberIds.EnumerateArray().Select(x => x.GetInt32()).Distinct().ToList();
             // Every member must reference a real account.
             var knownIds = await _context.Users
                 .AsNoTracking()
-                .Where(u => requestedIds.Contains(u.Id))
+                .Where(u => patch.MemberIds.Contains(u.Id))
                 .Select(u => u.Id)
                 .ToListAsync();
-            var unknown = requestedIds.Except(knownIds).ToList();
+            var unknown = patch.MemberIds.Except(knownIds).ToList();
             if (unknown.Count > 0)
                 throw new ValidationException($"Unknown member ids: {string.Join(", ", unknown)}.");
 
             // The owner always keeps membership; removing them would orphan the project.
+            var requestedIds = patch.MemberIds.ToHashSet();
             if (!requestedIds.Contains(project.OwnerId))
                 requestedIds.Add(project.OwnerId);
 
@@ -208,8 +206,7 @@ public class ProjectService : IProjectService
         var project = await _context.Projects.FindAsync(id);
         if (project is null) return null;
 
-        var actor = await _context.Users.FindAsync(userId);
-        if (!AccessControl.CanManageProject(actor, project)) return null;
+        if (!await _authorization.CanManageProjectAsync(id, userId)) return null;
 
         project.Status = status;
 
@@ -233,8 +230,7 @@ public class ProjectService : IProjectService
         var project = await _context.Projects.FindAsync(id);
         if (project is null) return false;
 
-        var actor = await _context.Users.FindAsync(userId);
-        if (!AccessControl.CanManageProject(actor, project)) return false;
+        if (!await _authorization.CanManageProjectAsync(id, userId)) return false;
 
         _context.Projects.Remove(project);
 
@@ -260,8 +256,7 @@ public class ProjectService : IProjectService
             .FirstOrDefaultAsync(p => p.Id == projectId);
         if (project is null) return false;
 
-        var actor = await _context.Users.FindAsync(userId);
-        if (!AccessControl.CanManageProject(actor, project)) return false;
+        if (!await _authorization.CanManageProjectAsync(projectId, userId)) return false;
 
         var member = await _context.Users.FindAsync(memberId);
         if (member is null) return false;
@@ -293,8 +288,7 @@ public class ProjectService : IProjectService
             .FirstOrDefaultAsync(p => p.Id == projectId);
         if (project is null) return false;
 
-        var actor = await _context.Users.FindAsync(userId);
-        if (!AccessControl.CanManageProject(actor, project)) return false;
+        if (!await _authorization.CanManageProjectAsync(projectId, userId)) return false;
 
         // The owner cannot be removed from their own project.
         if (memberId == project.OwnerId) return false;

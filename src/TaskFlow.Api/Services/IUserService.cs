@@ -5,5 +5,5 @@ namespace TaskFlow.Services;
 public interface IUserService
 {
     Task<UserResponseDto?> GetProfileAsync(int userId);
-    Task<UserResponseDto?> UpdateProfileAsync(int userId, System.Text.Json.JsonElement patch);
+    Task<UserResponseDto?> UpdateProfileAsync(int userId, UpdateProfileDto patch);
 }

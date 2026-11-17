@@ -10,10 +10,12 @@ namespace TaskFlow.Services;
 public class TaskService : ITaskService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IAuthorizationService _authorization;
 
-    public TaskService(ApplicationDbContext context)
+    public TaskService(ApplicationDbContext context, IAuthorizationService authorization)
     {
         _context = context;
+        _authorization = authorization;
     }
 
     public async Task<PagedResult<TaskResponseDto>> ListAsync(int userId, int? projectId, string? status, int page, int pageSize)
@@ -53,7 +55,7 @@ public class TaskService : ITaskService
             .FirstOrDefaultAsync(t => t.Id == id);
         if (task is null) return null;
 
-        if (!await CanAccessTask(task.Id, userId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(task.Id, userId)) return null;
         return task.ToDto();
     }
 
@@ -68,10 +70,11 @@ public class TaskService : ITaskService
             .Include(p => p.Members)
             .FirstOrDefaultAsync(p => p.Id == dto.ProjectId)
             ?? throw new ValidationException("Project not found.");
-        if (!await CanAccessProjectAsync(project.Id, actorId))
+        if (!await _authorization.CanAccessProjectAsync(project.Id, actorId))
             throw new ForbiddenException("You do not have access to this project.");
 
-        await EnsureAssigneeAllowedAsync(project.Id, dto.AssigneeId);
+        if (dto.AssigneeId.HasValue)
+            await EnsureAssigneeAllowedAsync(project.Id, dto.AssigneeId.Value);
 
         // Compute a gap-based order with retry on concurrent inserts.
         // Two concurrent creates can both read the same Max(Order) and collide
@@ -138,7 +141,7 @@ public class TaskService : ITaskService
         throw new ValidationException("Unable to create task due to a concurrent ordering conflict. Please retry.");
     }
 
-    public async Task<TaskResponseDto?> UpdateAsync(int id, JsonElement patch, int actorId)
+    public async Task<TaskResponseDto?> UpdateAsync(int id, UpdateTaskDto patch, int actorId)
     {
         var task = await _context.Tasks
             .Include(t => t.Subtasks)
@@ -146,76 +149,56 @@ public class TaskService : ITaskService
             .FirstOrDefaultAsync(t => t.Id == id);
         if (task is null) return null;
 
-        if (!await CanAccessTask(id, actorId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(id, actorId)) return null;
 
-        if (patch.TryGetProperty("title", out var title) && title.ValueKind is JsonValueKind.String && !string.IsNullOrWhiteSpace(title.GetString()))
-            task.Title = title.GetString()!;
+        if (!string.IsNullOrWhiteSpace(patch.Title))
+            task.Title = patch.Title.Trim();
 
-        if (patch.TryGetProperty("description", out var description) && description.ValueKind is JsonValueKind.String)
-            task.Description = description.GetString() ?? string.Empty;
+        if (patch.Description is not null)
+            task.Description = patch.Description;
 
-        if (patch.TryGetProperty("projectId", out var projectId) && projectId.ValueKind is JsonValueKind.Number)
+        if (!string.IsNullOrWhiteSpace(patch.Status))
         {
-            var newProjectId = projectId.GetInt32();
-            if (newProjectId != task.ProjectId)
+            if (!AppEnums.TaskStatuses.Contains(patch.Status, StringComparer.Ordinal))
+                throw new ValidationException($"Invalid status '{patch.Status}'. Allowed: {string.Join(", ", AppEnums.TaskStatuses)}");
+            task.Status = patch.Status;
+        }
+
+        if (!string.IsNullOrWhiteSpace(patch.Priority))
+        {
+            if (!AppEnums.TaskPriorities.Contains(patch.Priority, StringComparer.Ordinal))
+                throw new ValidationException($"Invalid priority '{patch.Priority}'. Allowed: {string.Join(", ", AppEnums.TaskPriorities)}");
+            task.Priority = patch.Priority;
+        }
+
+        if (patch.AssigneeId.HasValue)
+        {
+            if (patch.AssigneeId.Value.ValueKind == JsonValueKind.Null)
+                task.AssigneeId = null;
+            else
             {
-                if (!await CanAccessProjectAsync(newProjectId, actorId))
-                    throw new ForbiddenException("You do not have access to the target project.");
-                task.ProjectId = newProjectId;
+                var assigneeId = patch.AssigneeId.Value.GetInt32();
+                await EnsureAssigneeAllowedAsync(task.ProjectId, assigneeId);
+                task.AssigneeId = assigneeId;
             }
         }
 
-        if (patch.TryGetProperty("status", out var status) && status.ValueKind is JsonValueKind.String)
+        if (patch.DueDate.HasValue)
         {
-            if (!AppConstants.IsValidTaskStatus(status.GetString()))
-                throw new ValidationException($"Invalid status '{status.GetString()}'.");
-            var newStatus = status.GetString()!;
-            if (newStatus != task.Status &&
-                !(patch.TryGetProperty("order", out var explicitOrder) && explicitOrder.ValueKind is JsonValueKind.Number))
-            {
-                // Moving columns without an explicit index appends the task to the
-                // end of the destination column using a gap-based decimal order.
-                var lastOrder = await _context.Tasks
-                    .Where(t => t.ProjectId == task.ProjectId && t.Status == newStatus)
-                    .MaxAsync(t => (decimal?)t.Order);
-                task.Order = (lastOrder ?? 0m) + 1000m;
-            }
-            task.Status = newStatus;
+            if (patch.DueDate.Value.ValueKind == JsonValueKind.Null)
+                task.DueDate = null;
+            else
+                task.DueDate = patch.DueDate.Value.GetDateTime();
         }
 
-        if (patch.TryGetProperty("priority", out var priority) && priority.ValueKind is JsonValueKind.String)
-        {
-            if (!AppConstants.IsValidTaskPriority(priority.GetString()))
-                throw new ValidationException($"Invalid priority '{priority.GetString()}'.");
-            task.Priority = priority.GetString()!;
-        }
+        if (patch.Labels is not null)
+            task.Labels = patch.Labels;
 
-        if (patch.TryGetProperty("assigneeId", out var assigneeId))
-        {
-            int? nextAssignee = assigneeId.ValueKind is JsonValueKind.Null
-                ? null
-                : assigneeId.GetInt32();
-            await EnsureAssigneeAllowedAsync(task.ProjectId, nextAssignee);
-            task.AssigneeId = nextAssignee;
-        }
-
-        if (patch.TryGetProperty("dueDate", out var dueDate))
-            task.DueDate = dueDate.ValueKind is JsonValueKind.Null
-                ? null
-                : dueDate.GetDateTime();
-
-        if (patch.TryGetProperty("order", out var order) && order.ValueKind is JsonValueKind.Number)
-            task.Order = order.GetInt32();
-
-        if (patch.TryGetProperty("labels", out var labels) && labels.ValueKind is JsonValueKind.Array)
-            task.Labels = labels.EnumerateArray().Select(x => x.GetString() ?? string.Empty).ToList();
-
-        if (patch.TryGetProperty("subtasks", out var subtasks) && subtasks.ValueKind is JsonValueKind.Array)
-            ReconcileSubtasks(task, subtasks);
+        if (patch.Subtasks is not null)
+            ReconcileSubtasksTyped(task, patch.Subtasks);
 
         task.UpdatedAt = DateTime.UtcNow;
 
-        // Task update + activity log are atomic.
         _context.Activities.Add(new Activity
         {
             ActorId = actorId,
@@ -236,7 +219,7 @@ public class TaskService : ITaskService
         var task = await _context.Tasks.FindAsync(id);
         if (task is null) return false;
 
-        if (!await CanAccessTask(id, actorId)) return false;
+        if (!await _authorization.CanAccessTaskAsync(id, actorId)) return false;
 
         _context.Tasks.Remove(task);
 
@@ -266,7 +249,7 @@ public class TaskService : ITaskService
             .FirstOrDefaultAsync(t => t.Id == id);
         if (task is null) return null;
 
-        if (!await CanAccessTask(id, actorId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(id, actorId)) return null;
 
         // Concurrent drag-and-drop: retry on RowVersion conflicts.
         var moveRetries = 5;
@@ -279,7 +262,7 @@ public class TaskService : ITaskService
                 .FirstOrDefaultAsync(t => t.Id == id);
             if (currentTask is null) return null;
 
-            if (!await CanAccessTask(id, actorId)) return null;
+            if (!await _authorization.CanAccessTaskAsync(id, actorId)) return null;
 
             var column = await _context.Tasks
                 .Where(t => t.ProjectId == currentTask.ProjectId && t.Status == dto.Status && t.Id != id)
@@ -392,7 +375,7 @@ public class TaskService : ITaskService
 
     public async Task<TaskResponseDto?> ToggleSubtaskAsync(int taskId, int subtaskId, int actorId)
     {
-        if (!await CanAccessTask(taskId, actorId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(taskId, actorId)) return null;
 
         var subtask = await _context.SubTasks
             .FirstOrDefaultAsync(s => s.Id == subtaskId && s.TaskId == taskId);
@@ -411,7 +394,7 @@ public class TaskService : ITaskService
         var task = await _context.Tasks.FindAsync(taskId);
         if (task is null) return null;
 
-        if (!await CanAccessTask(taskId, actorId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(taskId, actorId)) return null;
 
         var comment = new Comment
         {
@@ -450,10 +433,8 @@ public class TaskService : ITaskService
     /// (owner, member, or administrator). This prevents leaking other users'
     /// identities through task assignment.
     /// </summary>
-    private async Task EnsureAssigneeAllowedAsync(int projectId, int? assigneeId)
+    private async Task EnsureAssigneeAllowedAsync(int projectId, int assigneeId)
     {
-        if (!assigneeId.HasValue) return;
-
         var project = await _context.Projects
             .AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == projectId);
@@ -461,45 +442,29 @@ public class TaskService : ITaskService
 
         var assignee = await _context.Users
             .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == assigneeId.Value);
+            .FirstOrDefaultAsync(u => u.Id == assigneeId);
         if (assignee is null) throw new ValidationException("Assignee not found.");
 
-        if (!AccessControl.CanAccessProject(assignee, project))
+        if (!await _authorization.CanAccessProjectAsync(projectId, assigneeId))
             throw new ValidationException("Assignee does not have access to this project.");
     }
 
-    private static void ReconcileSubtasks(ProjectTask task, JsonElement subtasks)
+    private static void ReconcileSubtasksTyped(ProjectTask task, List<UpdateSubtaskDto> incoming)
     {
-        var incoming = subtasks.EnumerateArray().Select(x => new
-        {
-            RawId = x.TryGetProperty("id", out var id) && id.ValueKind is JsonValueKind.String
-                ? id.GetString()
-                : null,
-            Title = x.TryGetProperty("title", out var t) && t.ValueKind is JsonValueKind.String
-                ? t.GetString()
-                : null,
-            Done = x.TryGetProperty("done", out var d) && d.ValueKind is JsonValueKind.True
-        }).ToList();
-
         foreach (var existing in task.Subtasks.ToList())
         {
-            var match = incoming.FirstOrDefault(i =>
-                i.RawId is not null && int.TryParse(i.RawId, out var parsed) && parsed == existing.Id);
+            var match = incoming.FirstOrDefault(i => i.Id.HasValue && i.Id.Value == existing.Id);
             if (match is null)
             {
                 task.Subtasks.Remove(existing);
                 continue;
             }
-            if (match.Title is not null) existing.Title = match.Title;
+            existing.Title = match.Title;
             existing.Done = match.Done;
         }
 
-        foreach (var item in incoming)
-        {
-            var isNew = item.RawId is null || !int.TryParse(item.RawId, out _);
-            if (isNew && !string.IsNullOrWhiteSpace(item.Title))
-                task.Subtasks.Add(new SubTask { Title = item.Title, Done = item.Done });
-        }
+        foreach (var item in incoming.Where(i => !i.Id.HasValue && !string.IsNullOrWhiteSpace(i.Title)))
+            task.Subtasks.Add(new SubTask { Title = item.Title, Done = item.Done });
     }
 
     private async Task<TaskResponseDto> LoadDtoAsync(int id) =>
@@ -508,34 +473,6 @@ public class TaskService : ITaskService
             .Include(t => t.Comments)
             .AsNoTracking()
             .FirstOrDefaultAsync(t => t.Id == id))!.ToDto();
-
-    private async Task<bool> CanAccessTask(int taskId, int userId)
-    {
-        var projectId = await _context.Tasks
-            .AsNoTracking()
-            .Where(t => t.Id == taskId)
-            .Select(t => t.ProjectId)
-            .FirstOrDefaultAsync();
-        if (projectId == 0) return false;
-        return await CanAccessProjectAsync(projectId, userId);
-    }
-
-    private async Task<bool> CanAccessProjectAsync(int projectId, int userId)
-    {
-        // Admin short-circuit: one lightweight query instead of loading the full
-        // project graph and the user entity separately.
-        var actor = await _context.Users
-            .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => u.Role)
-            .FirstOrDefaultAsync();
-        if (actor == "admin") return true;
-
-        return await _context.Projects
-            .AsNoTracking()
-            .Where(p => p.Id == projectId && (p.OwnerId == userId || p.Members.Any(m => m.UserId == userId)))
-            .AnyAsync();
-    }
 
     private async Task<List<int>> AccessibleProjectIdsAsync(int userId) =>
         await _context.Projects

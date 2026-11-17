@@ -57,7 +57,7 @@ public class ProjectServiceTests : IDisposable
         await _context.SaveChangesAsync();
     }
 
-    private ProjectService CreateService() => new(_context);
+    private ProjectService CreateService() => new(_context, new AuthorizationService(_context));
 
     private int GetOwnerId() => _context.Users.First(u => u.Name == "Owner").Id;
     private int GetMemberId() => _context.Users.First(u => u.Name == "Member").Id;
@@ -135,8 +135,7 @@ public class ProjectServiceTests : IDisposable
         var ownerId = GetOwnerId();
         var projectId = GetProjectId();
 
-        var result = await service.UpdateAsync(projectId, System.Text.Json.JsonDocument.Parse(
-            @"{""name"":""Renamed Project"",""status"":""completed""}").RootElement, ownerId);
+        var result = await service.UpdateAsync(projectId, new UpdateProjectDto { Name = "Renamed Project", Status = "completed" }, ownerId);
 
         Assert.NotNull(result);
         Assert.Equal("Renamed Project", result.Name);
