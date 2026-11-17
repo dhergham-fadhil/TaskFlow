@@ -192,4 +192,6 @@ npm test
 
 ## License
 
-MIT
+Copyright © 2026 Dhergham Fadhil Awad. All rights reserved.
+
+This project and its source code are proprietary. No permission is granted to use, copy, modify, or distribute this software, in whole or in part, without prior written permission from the author.
