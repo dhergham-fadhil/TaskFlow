@@ -67,14 +67,23 @@ export function mapUser(m: any): User {
   }
 }
 
+const VALID_ACTIVITY_KINDS = new Set([
+  'create',
+  'comment',
+  'move',
+  'project',
+  'update',
+])
+
 export function mapActivity(a: any): Activity {
+  const kind = VALID_ACTIVITY_KINDS.has(a.kind) ? a.kind : 'update'
   return {
     id: a.id.toString(),
     actorId: a.actorId.toString(),
     action: a.action,
     target: a.target,
     createdAt: a.createdAt,
-    kind: a.kind as Activity['kind'],
+    kind,
   }
 }
 

@@ -211,8 +211,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }
         : current,
     )
+    await refresh()
     return updated
-  }, [])
+  }, [api, refresh])
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({

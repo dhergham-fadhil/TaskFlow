@@ -148,8 +148,12 @@ export function KanbanBoard({
     let destinationStatus: TaskStatus
     let destinationIndex: number
 
+    const VALID_STATUSES: TaskStatus[] = ['backlog', 'in_progress', 'review', 'done']
+
     if (overId.startsWith('column-')) {
-      destinationStatus = overId.replace('column-', '') as TaskStatus
+      const rawStatus = overId.replace('column-', '')
+      if (!VALID_STATUSES.includes(rawStatus as TaskStatus)) return
+      destinationStatus = rawStatus as TaskStatus
       destinationIndex = groups[destinationStatus].filter((task) => task.id !== active.id).length
     } else {
       const overTask = tasks.find((task) => task.id === overId)
