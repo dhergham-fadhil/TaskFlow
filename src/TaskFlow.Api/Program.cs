@@ -8,6 +8,7 @@ using TaskFlow.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,6 +47,17 @@ if (demoEnabled)
 
 builder.Services.AddOpenApi();
 
+// Rate limiting: protect authentication endpoints from brute-force attacks.
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("auth", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = 10;
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 0;
+    });
+});
+
 // CORS origins are configuration-driven; no hardcoded production origins.
 var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
 if (corsOrigins.Length == 0 && builder.Environment.IsDevelopment())
@@ -68,6 +80,7 @@ if (corsOrigins.Length > 0)
 builder.Services.AddScoped<IProjectService, ProjectService>();
 builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IRefreshTokenService, RefreshTokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
 builder.Services.AddScoped<IActivityService, ActivityService>();
@@ -132,6 +145,8 @@ app.UseExceptionHandler(appBuilder =>
 if (corsOrigins.Length > 0)
     app.UseCors("AllowFrontend");
 
+app.UseRateLimiter();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -180,7 +195,7 @@ app.MapPost("/api/auth/register", async (RegisterDto dto, IAuthService authServi
     if (!result.Success)
         return Results.BadRequest(new { error = result.Error });
     return Results.Ok(new { token = result.Token });
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/login", async (LoginDto dto, IAuthService authService) =>
 {
@@ -189,8 +204,26 @@ app.MapPost("/api/auth/login", async (LoginDto dto, IAuthService authService) =>
     var result = await authService.Login(dto);
     if (!result.Success)
         return Results.BadRequest(new { error = result.Error });
-    return Results.Ok(new { token = result.Token });
-});
+    return Results.Ok(new { token = result.Token, refreshToken = result.RefreshToken });
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/auth/refresh", async (string refreshToken, IRefreshTokenService refreshTokenService) =>
+{
+    if (string.IsNullOrWhiteSpace(refreshToken))
+        return Results.BadRequest(new { error = "Refresh token is required." });
+    var (accessToken, newRefreshToken) = await refreshTokenService.RotateAsync(refreshToken);
+    if (accessToken is null)
+        return Results.Unauthorized();
+    return Results.Ok(new { token = accessToken, refreshToken = newRefreshToken });
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/auth/revoke", async (string refreshToken, ClaimsPrincipal user, IRefreshTokenService refreshTokenService) =>
+{
+    if (string.IsNullOrWhiteSpace(refreshToken))
+        return Results.BadRequest(new { error = "Refresh token is required." });
+    await refreshTokenService.RevokeAsync(refreshToken);
+    return Results.NoContent();
+}).RequireAuthorization().RequireRateLimiting("auth");
 
 // ---------------------------------------------------------------
 // Protected endpoints (JWT required)

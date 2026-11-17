@@ -16,6 +16,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Comment> Comments { get; set; } = null!;
     public DbSet<Activity> Activities { get; set; } = null!;
     public DbSet<ProjectMember> ProjectMembers { get; set; }
+    public DbSet<RefreshToken> RefreshTokens { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -64,5 +65,16 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<ProjectTask>()
             .Property(t => t.Order)
             .HasColumnType("decimal(18,4)");
+
+        // RefreshToken lookups by hash and user.
+        modelBuilder.Entity<RefreshToken>(b =>
+        {
+            b.HasIndex(rt => rt.TokenHash);
+            b.HasIndex(rt => rt.UserId);
+            b.HasOne(rt => rt.User)
+                .WithMany()
+                .HasForeignKey(rt => rt.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
     }
 }

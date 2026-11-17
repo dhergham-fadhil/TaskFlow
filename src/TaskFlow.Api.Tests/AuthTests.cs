@@ -30,7 +30,7 @@ public class AuthServiceTests : IDisposable
             .Build();
     }
 
-    private AuthService CreateService() => new(_context, _configuration);
+    private AuthService CreateService() => new(_context, _configuration, new FakeRefreshTokenService());
 
     public void Dispose() => _context.Dispose();
 
@@ -49,6 +49,7 @@ public class AuthServiceTests : IDisposable
 
         Assert.True(result.Success);
         Assert.NotNull(result.Token);
+        Assert.NotNull(result.RefreshToken);
         Assert.Null(result.Error);
 
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == "alice@example.com");
@@ -77,8 +78,10 @@ public class AuthServiceTests : IDisposable
         });
 
         Assert.False(result.Success);
-        Assert.Equal("Email already registered", result.Error);
+        // Generic message to prevent email enumeration.
+        Assert.Equal("Invalid email or password.", result.Error);
         Assert.Null(result.Token);
+        Assert.Null(result.RefreshToken);
     }
 
     [Fact]
@@ -115,6 +118,7 @@ public class AuthServiceTests : IDisposable
 
         Assert.True(result.Success);
         Assert.NotNull(result.Token);
+        Assert.NotNull(result.RefreshToken);
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using TaskFlow.Data;
 using TaskFlow.Models;
 using TaskFlow.Services;
 using Microsoft.EntityFrameworkCore;
+using System.Threading;
 
 namespace TaskFlow.Api.Tests;
 
@@ -31,4 +32,15 @@ public class FakeAuthorizationService : IAuthorizationService
     public Task<bool> CanAccessProjectAsync(int projectId, int userId, CancellationToken ct = default) => Task.FromResult(true);
     public Task<bool> CanManageProjectAsync(int projectId, int userId, CancellationToken ct = default) => Task.FromResult(true);
     public Task<bool> CanAccessTaskAsync(int taskId, int userId, CancellationToken ct = default) => Task.FromResult(true);
+}
+
+/// <summary>
+/// Test double for IRefreshTokenService that returns fake tokens.
+/// </summary>
+public class FakeRefreshTokenService : IRefreshTokenService
+{
+    public Task<string> CreateAsync(int userId, string? ipAddress = null) => Task.FromResult("fake-refresh-token");
+    public Task<(string? AccessToken, string? RefreshToken)> RotateAsync(string refreshToken, string? ipAddress = null) => Task.FromResult(((string?)"fake-access-token", (string?)"fake-refresh-token"));
+    public Task RevokeAsync(string refreshToken, string? ipAddress = null) => Task.CompletedTask;
+    public Task RevokeAllAsync(int userId) => Task.CompletedTask;
 }

@@ -55,7 +55,9 @@ public class TaskService : ITaskService
             .FirstOrDefaultAsync(t => t.Id == id);
         if (task is null) return null;
 
-        if (!await _authorization.CanAccessTaskAsync(task.Id, userId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(task.Id, userId))
+            throw new ForbiddenException("You do not have access to this task.");
+
         return task.ToDto();
     }
 

@@ -10,6 +10,7 @@ export class ApiError extends Error {
 }
 
 let onUnauthorized: (() => void) | null = null
+let refreshInFlight: Promise<string | null> | null = null
 
 export function setUnauthorizedHandler(handler: (() => void) | null) {
   onUnauthorized = handler
@@ -27,6 +28,23 @@ export function clearToken(): void {
   localStorage.removeItem('token')
 }
 
+export function getRefreshToken(): string | null {
+  return localStorage.getItem('refreshToken')
+}
+
+export function setRefreshToken(token: string): void {
+  localStorage.setItem('refreshToken', token)
+}
+
+export function clearRefreshToken(): void {
+  localStorage.removeItem('refreshToken')
+}
+
+export function clearAuth(): void {
+  clearToken()
+  clearRefreshToken()
+}
+
 /**
  * Shared response handler for every API call.
  * - 401 triggers the global unauthorized flow (auth provider signs out).
@@ -36,6 +54,7 @@ export function clearToken(): void {
 export async function handleResponse(response: Response) {
   if (response.status === 401) {
     onUnauthorized?.()
+    throw new ApiError(401, 'Unauthorized')
   }
 
   if (!response.ok) {
@@ -81,7 +100,69 @@ export async function request(endpoint: string, options: RequestInit = {}) {
     headers,
   })
 
+  // On 401, attempt to refresh the access token once, then retry.
+  if (response.status === 401) {
+    const refreshToken = getRefreshToken()
+    if (refreshToken) {
+      const refreshed = await refreshAuth(refreshToken)
+      if (refreshed) {
+        const newToken = getToken()
+        const retryHeaders = new Headers({
+          'Content-Type': 'application/json',
+          ...(newToken && { Authorization: `Bearer ${newToken}` }),
+          ...options.headers,
+        })
+        const retryResponse = await fetch(`${API_BASE_URL}${endpoint}`, {
+          ...options,
+          headers: retryHeaders,
+        })
+        return handleResponse(retryResponse)
+      }
+    }
+    // No refresh token or refresh failed — signal unauthorized.
+    onUnauthorized?.()
+    return handleResponse(response)
+  }
+
   return handleResponse(response)
+}
+
+/**
+ * Rotate the refresh token and store the new access + refresh tokens.
+ * Returns true on success, false on failure.
+ */
+export async function refreshAuth(refreshToken: string): Promise<boolean> {
+  // Prevent multiple concurrent refreshes for the same token.
+  if (refreshInFlight) return refreshInFlight.then(Boolean)
+
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      })
+      if (!response.ok) {
+        clearAuth()
+        return false
+      }
+      const data = (await response.json()) as { token?: string; refreshToken?: string }
+      if (!data.token || !data.refreshToken) {
+        clearAuth()
+        return false
+      }
+      setToken(data.token)
+      setRefreshToken(data.refreshToken)
+      return true
+    } catch {
+      clearAuth()
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+
+  return refreshInFlight
 }
 
 export interface UserResponse {
@@ -93,6 +174,7 @@ export interface UserResponse {
 
 export interface AuthResponse {
   token: string
+  refreshToken: string
 }
 
 export const authApi = {

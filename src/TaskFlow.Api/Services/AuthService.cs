@@ -15,32 +15,41 @@ public class AuthService : IAuthService
 {
     private readonly ApplicationDbContext _context;
     private readonly IConfiguration _configuration;
-    public AuthService(ApplicationDbContext context, IConfiguration configuration)
+    private readonly IRefreshTokenService _refreshTokenService;
+
+    public AuthService(ApplicationDbContext context, IConfiguration configuration, IRefreshTokenService refreshTokenService)
     {
         _context = context;
         _configuration = configuration;
+        _refreshTokenService = refreshTokenService;
     }
 
-    public async Task<(bool Success, string? Token, string? Error)> Register(RegisterDto dto)
+    public async Task<(bool Success, string? Token, string? RefreshToken, string? Error)> Register(RegisterDto dto)
     {
         if (string.IsNullOrWhiteSpace(dto.Name))
-            return (false, null, "Name is required.");
+            return (false, null, null, "Name is required.");
         var name = dto.Name.Trim();
 
         if (!new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(dto.Email))
-            return (false, null, "A valid email address is required.");
+            return (false, null, null, "A valid email address is required.");
 
         if (dto.Password.Length < 8)
-            return (false, null, "Password must be at least 8 characters.");
+            return (false, null, null, "Password must be at least 8 characters.");
+
+        // Require at least one letter and one digit.
+        var hasLetter = dto.Password.Any(char.IsLetter);
+        var hasDigit = dto.Password.Any(char.IsDigit);
+        if (!hasLetter || !hasDigit)
+            return (false, null, null, "Password must contain at least one letter and one digit.");
 
         // Normalize the email so lookups are case-insensitive regardless of collation.
         var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
 
-        // Check if email already exists
+        // Check if email already exists — generic failure to avoid enumeration.
         var existingUser = await _context.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail);
         if (existingUser != null)
         {
-            return (false, null, "Email already registered");
+            return (false, null, null, "Invalid email or password.");
         }
 
         // Hash the password
@@ -58,25 +67,31 @@ public class AuthService : IAuthService
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
 
-        return (true, GenerateJwtToken(user), null);
+        var token = GenerateJwtToken(user);
+        var refreshToken = await _refreshTokenService.CreateAsync(user.Id);
+
+        return (true, token, refreshToken, null);
     }
 
-    public async Task<(bool Success, string? Token, string? Error)> Login(LoginDto dto)
+    public async Task<(bool Success, string? Token, string? RefreshToken, string? Error)> Login(LoginDto dto)
     {
         var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail);
         if (user == null)
         {
-            return (false, null, "Invalid email or password");
+            return (false, null, null, "Invalid email or password");
         }
 
         // Verify password
         if (!BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
         {
-            return (false, null, "Invalid email or password");
+            return (false, null, null, "Invalid email or password");
         }
 
-        return (true, GenerateJwtToken(user), null);
+        var token = GenerateJwtToken(user);
+        var refreshToken = await _refreshTokenService.CreateAsync(user.Id);
+
+        return (true, token, refreshToken, null);
     }
 
     private string GenerateJwtToken(User user)

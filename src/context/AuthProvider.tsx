@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { authApi, ApiError, clearToken, getToken, setToken, setUnauthorizedHandler, type UserResponse } from '../api/client'
+import { authApi, ApiError, clearAuth, clearToken, getToken, setRefreshToken, setToken, setUnauthorizedHandler, type UserResponse } from '../api/client'
 
 export interface AuthUser {
   id: string
@@ -82,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   const logout = useCallback(() => {
-    clearToken()
+    clearAuth()
     setUser(null)
     navigate('/login', { replace: true })
   }, [navigate])
@@ -98,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const expiry = readTokenExpiry(token)
     if (expiry !== null && expiry < Date.now()) {
-      clearToken()
+      clearAuth()
       setIsLoading(false)
       return
     }
@@ -111,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // keeping the token lets the shell render its error state with retry
         // instead of silently throwing the user back to the login screen.
         if (error instanceof ApiError && error.status === 401) {
-          clearToken()
+          clearAuth()
           setUser(null)
           return
         }
@@ -134,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       const result = await authApi.login(email, password)
       setToken(result.token)
+      setRefreshToken(result.refreshToken)
       const profile = await authApi.getProfile()
       setUser(mapUser(profile))
     },
@@ -143,6 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(async (name: string, email: string, password: string) => {
     const result = await authApi.register(name, email, password)
     setToken(result.token)
+    setRefreshToken(result.refreshToken)
     const profile = await authApi.getProfile()
     setUser(mapUser(profile))
   }, [])

@@ -7,7 +7,7 @@ export default defineConfig({
     port: 5173,
     open: false,
     watch: {
-      ignored: ['**/src/TaskFlow.Api/**'],
+      ignored: ['**/src/TaskFlow.Api*/**'],
     },
   },
 })
