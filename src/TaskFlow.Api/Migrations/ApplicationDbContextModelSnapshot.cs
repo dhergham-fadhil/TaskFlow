@@ -277,6 +277,42 @@ namespace TaskFlow.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("TaskFlow.Models.RefreshToken", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ReplacedByToken")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("RefreshTokens");
+                });
+
             modelBuilder.Entity("TaskFlow.Models.Activity", b =>
                 {
                     b.HasOne("TaskFlow.Models.User", "Actor")
@@ -286,6 +322,17 @@ namespace TaskFlow.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Actor");
+                });
+
+            modelBuilder.Entity("TaskFlow.Models.RefreshToken", b =>
+                {
+                    b.HasOne("TaskFlow.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TaskFlow.Models.Comment", b =>
