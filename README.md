@@ -14,11 +14,11 @@ Task Flow/
 │   │   ├── Models/               # Entity models (User, Project, ProjectTask, SubTask, Comment, Activity)
 │   │   ├── Program.cs            # Application entry point, middleware, auth configuration
 │   │   └── appsettings*.json     # Configuration
-│   ├── TaskFlow.Api.Tests/       # xUnit backend tests (37 tests)
+│   ├── TaskFlow.Api.Tests/       # xUnit backend tests (87 tests)
 │   ├── api/                      # Frontend API client (TypeScript)
-│   │   └── client.ts             # Shared fetch wrapper with auth handling
+│   │   └── client.ts             # Shared fetch wrapper with auth handling + refresh token retry
 │   ├── components/               # React components (auth, board, dashboard, projects, tasks, ui)
-│   ├── context/                  # React context providers (AuthContext)
+│   ├── context/                  # React context providers (AuthProvider)
 │   ├── data/                     # Frontend data layer
 │   ├── lib/                      # Utility libraries
 │   ├── pages/                    # Route page components
@@ -37,7 +37,9 @@ Task Flow/
 
 ## Features
 
-- **Authentication**: JWT-based auth with register/login, password hashing (BCrypt), role-based access control (admin/member/viewer)
+- **Authentication**: JWT-based auth with register/login, password hashing (BCrypt), role-based access control (admin/member/viewer), refresh token rotation and revocation
+- **Rate limiting**: Fixed-window rate limiting (10 req/min) on register/login/refresh/revoke endpoints
+- **Data integrity**: Cascade delete (Project→Task, Task→SubTask, Task→Comment), unique ordering index per project/status
 - **Projects**: Create, update, delete projects; add/remove members; set project status (active/paused/completed)
 - **Tasks**: Create, update, delete tasks with drag-and-drop Kanban board; status (backlog/in_progress/review/done), priority (low/medium/high/urgent), assignees, due dates, labels
 - **Subtasks**: Checklist-style subtasks per task with toggle completion
@@ -54,6 +56,9 @@ Task Flow/
 - Password hashing with BCrypt
 - Role-based authorization (admin, member, viewer)
 - Project-scoped access control (users can only access projects they own or are members of)
+- Refresh token rotation: access tokens are short-lived; refresh tokens are SHA-256 hashed, single-use, 7-day expiry, with rotation on refresh
+- Rate limiting: fixed-window limiter (10 requests/minute) on register/login/refresh/revoke
+- Generic auth error messages (no email enumeration)
 
 ## Getting Started
 
@@ -171,11 +176,17 @@ Frontend (`.env`):
 
 ### Backend (xUnit)
 
-37 tests covering:
+87 tests covering:
 - Auth service: registration, login, duplicate email, password validation
 - Task service: creation, ordering, validation, subtasks, comments, move, delete
 - Project service: creation, status changes, members, deletion, access control
 - User service: profile, updates, duplicate email, role changes
+- Refresh token service: create, rotate, revoke, revoke-all, rotation chain
+- Database seeder: demo seeding safety (development-only, no hardcoded creds, idempotent)
+- Project membership: add/remove members, owner protection, duplicate prevention
+- Concurrency: ordering consistency under concurrent task creation
+- Pagination: page size, filtering, beyond-data pages
+- Authorization: outsider cannot update/move tasks they don't own
 
 ```bash
 dotnet test src/TaskFlow.Api.Tests/
@@ -184,7 +195,7 @@ dotnet test src/TaskFlow.Api.Tests/
 ### Frontend (Vitest)
 
 8 tests covering the API client response handler:
-- JSON parsing, empty bodies, 204 handling, error extraction, 401 handling
+- JSON parsing, empty bodies, 204 handling, error extraction, 401 handling, refresh token retry
 
 ```bash
 npm test

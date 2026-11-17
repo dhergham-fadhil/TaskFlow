@@ -73,8 +73,8 @@ public class WorkspaceService : IWorkspaceService
         // Members: all distinct users across accessible projects (owners + members).
         var memberUserIds = await _context.Projects
             .Where(p => projectIds.Contains(p.Id))
-            .SelectMany(p => p.Members.Select(m => m.UserId)
-                .Append(p.OwnerId))
+            .SelectMany(p => p.Members.Select(m => m.UserId))
+            .Concat(_context.Projects.Where(p => projectIds.Contains(p.Id)).Select(p => p.OwnerId))
             .Distinct()
             .ToListAsync();
 

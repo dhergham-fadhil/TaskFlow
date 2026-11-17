@@ -151,7 +151,7 @@ public class TaskService : ITaskService
             .FirstOrDefaultAsync(t => t.Id == id);
         if (task is null) return null;
 
-        if (!await _authorization.CanAccessTaskAsync(id, actorId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(id, actorId)) throw new ForbiddenException("You do not have access to this task.");
 
         if (!string.IsNullOrWhiteSpace(patch.Title))
             task.Title = patch.Title.Trim();
@@ -251,7 +251,7 @@ public class TaskService : ITaskService
             .FirstOrDefaultAsync(t => t.Id == id);
         if (task is null) return null;
 
-        if (!await _authorization.CanAccessTaskAsync(id, actorId)) return null;
+        if (!await _authorization.CanAccessTaskAsync(id, actorId)) throw new ForbiddenException("You do not have access to this task.");
 
         // Concurrent drag-and-drop: retry on RowVersion conflicts.
         var moveRetries = 5;
