@@ -2,6 +2,8 @@
 
 TaskFlow is a full-stack project management application: a React 19 + TypeScript single-page frontend backed by an ASP.NET Core 9 Web API, EF Core and SQL Server. It provides Kanban-style boards, projects, teams, JWT authentication, subtasks, comments, and an activity feed.
 
+I'm **Dhergham Fadhil Awad**, the author and maintainer of TaskFlow. I designed the system, made the architecture and stack decisions, built the application, and wrote this README to explain the reasoning behind those choices in my own words.
+
 > **Proprietary software.** See [License](#license).
 
 ---
@@ -13,16 +15,17 @@ TaskFlow is a full-stack project management application: a React 19 + TypeScript
   - [Component view](#component-view)
   - [Request lifecycle](#request-lifecycle)
   - [Domain model](#domain-model)
-  - [Core mechanisms and why they were designed this way](#core-mechanisms-and-why-they-were-designed-this-way)
+  - [Core mechanisms and why I designed them this way](#core-mechanisms-and-why-i-designed-them-this-way)
 - [Architecture: decisions and alternatives](#architecture-decisions-and-alternatives)
-- [Technology stack and why we chose it](#technology-stack-and-why-we-chose-it)
-- [Challenges faced and how we overcame them](#challenges-faced-and-how-we-overcame-them)
+- [Technology stack and why I chose it](#technology-stack-and-why-i-chose-it)
+- [Challenges I faced and how I overcame them](#challenges-i-faced-and-how-i-overcame-them)
 - [Known limitations](#known-limitations)
 - [Future improvements](#future-improvements)
 - [Getting started](#getting-started)
 - [API endpoints](#api-endpoints)
 - [Testing and verification](#testing-and-verification)
 - [Project structure](#project-structure)
+- [Author](#author)
 - [License](#license)
 
 ---
@@ -45,7 +48,7 @@ Screenshots are in [`screenshots/`](screenshots/) (dashboard, projects, board, a
 
 ### Component view
 
-TaskFlow is a **modular layered monolith** with a decoupled SPA. The API is a single deployable unit; the separation lives in code (endpoints → services → data), not in network boundaries.
+I designed TaskFlow as a **modular layered monolith** with a decoupled SPA. The API is a single deployable unit; the separation lives in code (endpoints → services → data), not in network boundaries.
 
 ```mermaid
 flowchart TB
@@ -134,15 +137,15 @@ sequenceDiagram
 
 Foreign keys with explicit delete behaviors (`Cascade` / `Restrict` / `SetNull`) keep deletes safe and audit data meaningful. Enums are persisted as strings via `HasConversion<string>()`, so the database is readable and the wire format stays stable.
 
-### Core mechanisms and why they were designed this way
+### Core mechanisms and why I designed them this way
 
-**1. Authorization is resource-scoped, not just role-scoped.** `[Authorize]` proves *who* you are; `IAuthorizationService` decides *what you may touch*. Access is granted to project owners, project members, and admins; management is limited to owners/admins; `viewer` is read-only via `CanWriteAsync`, checked at the start of every mutating service method. Task access is derived from its project. This keeps the rule in one place and makes it unit-testable instead of duplicating checks across endpoints.
+**1. Authorization is resource-scoped, not just role-scoped.** `[Authorize]` proves *who the caller is*; `IAuthorizationService` decides *what the caller may touch*. Access is granted to project owners, project members, and admins; management is limited to owners/admins; `viewer` is read-only via `CanWriteAsync`, checked at the start of every mutating service method. Task access is derived from its project. This keeps the rule in one place and makes it unit-testable instead of duplicating checks across endpoints.
 
 **2. Kanban ordering uses fractional gaps plus optimistic concurrency.** Each column position is a `decimal(18,4)` value; moving an item computes a value between its neighbours (or halves the head value / appends +1000), so a move touches **one row** instead of renumbering the whole column. A unique index on `(ProjectId, Status, Order)` forbids duplicate positions; a SQL Server `rowversion` detects lost updates. Retries (bounded, with entity detaching and `ReloadAsync`) absorb concurrent creates and moves; when retries are exhausted the API returns `409 Conflict`. When gaps run out, the column is rebalanced.
 
-**3. Refresh tokens are hashed, single-use, and rotatable.** The raw token goes to the client; the server stores only its SHA-256 hash. Rotation revokes the previous token and links it to its replacement (`ReplacedByToken`), so replay is detectable. Access tokens live 15 minutes and carry a `jti` claim; refresh tokens live 7 days. Both lifetimes are configurable. Demo credentials are never hardcoded; they must be supplied via environment variables or user secrets.
+**3. Refresh tokens are hashed, single-use, and rotatable.** The raw token goes to the client; the server stores only its SHA-256 hash. Rotation revokes the previous token and links it to its replacement (`ReplacedByToken`), so replay is detectable. Access tokens live 15 minutes and carry a `jti` claim; refresh tokens live 7 days. Both lifetimes are configurable. I never hardcode demo credentials; I supply them via environment variables or user secrets.
 
-**4. Writes are atomic with their audit trail.** Creating a task saves the task first so its generated ID is valid, then logs the activity inside the same explicit transaction (a no-op under the in-memory test provider). Updates, deletes, comments and moves write the activity in a single `SaveChangesAsync`, so EF's implicit transaction guarantees both or neither.
+**4. Writes are atomic with the audit trail.** Creating a task saves the task first so its generated ID is valid, then logs the activity inside the same explicit transaction (a no-op under the in-memory test provider). Updates, deletes, comments and moves write the activity in a single `SaveChangesAsync`, so EF's implicit transaction guarantees both or neither.
 
 **5. Lists are paginated and query-shaped.** `PaginationValidation` clamps/validates page and size, project lists fetch the page of IDs first before including task graphs, `AsNoTracking` avoids change-tracker overhead on reads, SQL Server uses split queries, and the workspace endpoint reports `TasksTruncated` instead of silently dropping data.
 
@@ -154,9 +157,9 @@ Foreign keys with explicit delete behaviors (`Cascade` / `Restrict` / `SetNull`)
 
 ## Architecture: decisions and alternatives
 
-This table is the "why not X" companion to the system design above.
+This table records the choices I made and the alternatives I rejected. It is the "why not X" companion to the system design above.
 
-| Decision | What we chose | Alternatives considered | Why we chose it |
+| Decision | What I chose | Alternatives considered | Why I chose it |
 | --- | --- | --- | --- |
 | Overall shape | Modular layered monolith in one API process | Microservices; serverless functions | A single deployable unit keeps transactions (task + activity), authorization, and local development simple; layer boundaries still allow a future split. Microservices would add network failures and distributed transactions with no scaling need. |
 | API style | ASP.NET Core Minimal APIs | MVC controllers; GraphQL; gRPC | Less ceremony, explicit endpoints, easy DTO validation and status codes; OpenAPI is available in development. GraphQL would add query complexity/caching concerns; gRPC is unnecessary for a browser client. |
@@ -167,7 +170,7 @@ This table is the "why not X" companion to the system design above.
 | Authentication | Stateless JWT + rotating refresh tokens | Server-side sessions; OAuth/identity provider; opaque tokens | No server session store and natural horizontal scaling; rotation limits replay windows. A full IdP is valuable later but overkill for this scope (see roadmap). Sessions would require sticky state or a shared store. |
 | Authorization | Central `IAuthorizationService` + RBAC enum | Endpoint `[Authorize(Roles=…)]` only; per-handler ad-hoc checks | Resource ownership and membership cannot be expressed by role attributes alone; one service gives consistent 403 behavior and testability. |
 | Data access | EF Core with migrations | Dapper/raw SQL; NoSQL (MongoDB) | EF gives typed queries, migrations, change tracking for concurrency tokens, and provider portability in tests. Relational constraints (uniqueness, FKs, rowversion) are essential to ordering/audit correctness; a document store would push them into application code. |
-| Database | SQL Server | PostgreSQL; SQLite | Strong `rowversion` support and a natural fit with the .NET stack; SQLite cannot validate the concurrency/constraint behavior we rely on (Postgres remains a reasonable future port). |
+| Database | SQL Server | PostgreSQL; SQLite | Strong `rowversion` support and a natural fit with the .NET stack; SQLite cannot validate the concurrency/constraint behavior I rely on (Postgres remains a reasonable future port). |
 | Ordering strategy | Gap-based decimal positions + unique index + rowversion | Integer reindexing of whole columns; lexicographic "fractional index" strings; insertion at end only | Integer reindexing rewrites many rows and races under concurrent drags; gap ordering touches one row and the unique index catches collisions deterministically. |
 | Rate limiting | IP-partitioned fixed window, separate auth policy | One global bucket; sliding window/token bucket; API-key limits | Fixed windows are cheap and predictable; partitioning prevents noisy-neighbour starvation, and the tighter auth policy throttles credential stuffing. Sliding windows are a possible refinement. |
 | Testing | xUnit + EF InMemory for logic; Vitest for the client | Full SQL/Testcontainers integration tests only; Jest | InMemory tests are fast and deterministic for service logic; Vitest is native to Vite and fast. The trade-off (no real FK/index/rowversion verification) is documented under [Known limitations](#known-limitations). |
@@ -175,7 +178,7 @@ This table is the "why not X" companion to the system design above.
 
 ---
 
-## Technology stack and why we chose it
+## Technology stack and why I chose it
 
 ### Frontend
 
@@ -216,11 +219,11 @@ This table is the "why not X" companion to the system design above.
 
 ---
 
-## Challenges faced and how we overcame them
+## Challenges I faced and how I overcame them
 
-These are real issues encountered while building and auditing TaskFlow, not hypotheticals. The audit trail lives in [`docs/`](docs/) (`baseline.md`, `remediation-report.md`).
+These are the real issues I encountered while building and auditing TaskFlow, not hypotheticals. The audit trail I kept lives in [`docs/`](docs/) (`baseline.md`, `remediation-report.md`).
 
-| Challenge | Why it mattered | How we overcame it |
+| Challenge | Why it mattered | How I overcame it |
 | --- | --- | --- |
 | `dotnet ef` failed without JWT/demo secrets | Design-time tooling tried to resolve the full host and threw "JWT key is missing or too short", blocking migrations from the CLI. | Added `IDesignTimeDbContextFactory<ApplicationDbContext>` so EF builds a context without production-shaped configuration. `dotnet ef migrations list` now succeeds with no env vars; the obsolete failure is annotated in the baseline. |
 | Concurrent drag-and-drop lost updates and collided on task order | Two moves could compute the same position, hit the unique index, or overwrite each other. | Fractional gaps with `decimal(18,4)`, unique `(ProjectId, Status, Order)` index, `[Timestamp]` rowversion, bounded retries with detach/`ReloadAsync`, column rebalancing when gaps run out, and `409 Conflict` on exhaustion. Concurrency tests cover retry behavior. |
@@ -255,7 +258,7 @@ Be aware of these when deploying or extending TaskFlow:
 
 ## Future improvements
 
-Prioritized roadmap — the items below build directly on the design above.
+This is the roadmap I plan to follow, prioritized by what matters most. Each item builds directly on the design above.
 
 **P0 — Correctness and confidence**
 1. **SQL Server integration tests** with Testcontainers (or a CI service container): apply migrations to a real database and verify FKs, the unique email and order indexes, cascade behaviors, the duplicate-email path, and the concurrent-move `409`. This closes the biggest verification gap.
@@ -296,7 +299,7 @@ Prioritized roadmap — the items below build directly on the design above.
    cd src/TaskFlow.Api
    ```
 
-2. Configure JWT settings and demo credentials. The JWT key must be at least 32 characters. Demo credentials are required to create the demo administrator account; they are never hardcoded. Use environment variables or .NET User Secrets:
+2. Configure JWT settings and demo credentials. The JWT key must be at least 32 characters. Demo credentials are required to create the demo administrator account; I never hardcode them. I supply them through environment variables or .NET User Secrets:
    ```bash
    dotnet user-secrets set "Jwt:Key" "your-32-character-minimum-secret-key-here"
    dotnet user-secrets set "Demo:Email" "dhergham@example.com"
@@ -461,8 +464,14 @@ Task Flow/
 
 ---
 
+## Author
+
+I am **Dhergham Fadhil Awad**, the sole author and maintainer of TaskFlow. I designed the architecture, chose the stack, implemented the features, wrote the tests and documentation, and I own all decisions and limitations described in this README.
+
+---
+
 ## License
 
 Copyright © 2026 Dhergham Fadhil Awad. All rights reserved.
 
-This project and its source code are proprietary. No permission is granted to use, copy, modify, or distribute this software, in whole or in part, without prior written permission from the author.
+This project and its source code are proprietary. No permission is granted to use, copy, modify, or distribute this software, in whole or in part, without my prior written permission.
